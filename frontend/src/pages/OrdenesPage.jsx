@@ -8,7 +8,6 @@ import logoCge from "../../assets/logo.jpeg";
 const AFIP_ISSUER_NAME = import.meta.env.VITE_AFIP_ISSUER_NAME || "Federico Zabala";
 const AFIP_ISSUER_ADDRESS = import.meta.env.VITE_AFIP_ISSUER_ADDRESS || "Rivadavia 357";
 const AFIP_ISSUER_CITY = import.meta.env.VITE_AFIP_ISSUER_CITY || "Villa Ramallo";
-const AFIP_ISSUER_CUIL = import.meta.env.VITE_AFIP_ISSUER_CUIL || "20-30257623-9";
 const WORKSHOP_COMPANY_NAME = import.meta.env.VITE_TALLER_RAZON_SOCIAL || AFIP_ISSUER_NAME || "CGE Computacion";
 const WORKSHOP_COMPANY_ADDRESS = import.meta.env.VITE_TALLER_DIRECCION || AFIP_ISSUER_ADDRESS || "-";
 const WORKSHOP_COMPANY_PHONE = import.meta.env.VITE_TALLER_TELEFONO || "3407411490";
@@ -49,7 +48,19 @@ const initialFacturaForm = {
   tipo: "local",
   forma_pago: "efectivo",
   modo_detalle: "manual",
-  detalle_manual: ""
+  detalle_manual: "",
+  monto_final_reparacion: ""
+};
+
+const mapEmailReasonToMessage = (reason) => {
+  const reasons = {
+    cliente_sin_email: "el cliente no tiene email cargado",
+    smtp_no_configurado: "SMTP no configurado",
+    reporte_no_encontrado: "no se pudo construir el reporte técnico",
+    email_error: "ocurrió un error enviando el email"
+  };
+
+  return reasons[reason] || `motivo desconocido (${reason || "sin_detalle"})`;
 };
 
 const mapMovimientosToFacturaItems = (movimientos = []) =>
@@ -255,92 +266,148 @@ const renderAndPrintFactura = ({ venta, orden, items }) => {
     return;
   }
 
-  const total = items.reduce((acc, item) => acc + Number(item.cantidad || 0) * Number(item.precio_unitario || 0), 0);
-  const comprobanteNumero = venta?.comprobante?.numero || "-";
-  const tipoComprobante = (venta?.comprobante?.tipo || venta?.tipo || "").toString().toLowerCase();
-  const isAfip = tipoComprobante === "afip" || comprobanteNumero.toUpperCase().startsWith("AFIP");
-  const fiscalBlock = isAfip
-    ? `
-      <p class="muted"><b>Razon social:</b> ${escapeHtml(AFIP_ISSUER_NAME)}</p>
-      <p class="muted"><b>Domicilio:</b> ${escapeHtml(AFIP_ISSUER_ADDRESS)}</p>
-      <p class="muted"><b>Localidad:</b> ${escapeHtml(AFIP_ISSUER_CITY)}</p>
-      <p class="muted"><b>CUIL:</b> ${escapeHtml(AFIP_ISSUER_CUIL)}</p>
-    `
-    : "";
+  const total = Number(venta?.total || 0);
   const orderNumber = formatOrderNumber(orden?.nro_orden);
-  const emisorNombre = isAfip ? AFIP_ISSUER_NAME : "CGE Computacion";
+  const detalleDiagnosticoHtml = (items || [])
+    .map((item) => escapeHtml(item?.descripcion || "-").replace(/\n/g, "<br />"))
+    .filter((detalle) => detalle && detalle !== "-")
+    .map((detalle) => `<p class="detail-line">${detalle}</p>`)
+    .join("");
+  const copies = ["COPIA LOCAL", "COPIA CLIENTE"];
+  const copiesHtml = copies
+    .map(
+      (copyLabel, index) => `
+        <section class="sheet ${index === 0 ? "copy-break" : ""}">
+          <header class="header">
+            <div class="header-left">
+              <div class="brand">
+                <img src="${logoCge}" alt="Logo CGE Computacion" />
+                <div>
+                  <h1 class="company-name">CGE COMPUTACION</h1>
+                  <p class="company-line">${escapeHtml(AFIP_ISSUER_NAME)}</p>
+                  <p class="company-line">${escapeHtml(AFIP_ISSUER_ADDRESS)} - ${escapeHtml(AFIP_ISSUER_CITY)}</p>
+                  <p class="company-line">Tel: ${escapeHtml(WORKSHOP_COMPANY_PHONE)}</p>
+                </div>
+              </div>
+            </div>
+            <div class="header-right">
+              <div class="x-box">X</div>
+              <h2 class="report-title">INFORME TECNICO</h2>
+              <p class="report-number">N° ${escapeHtml(orderNumber)}</p>
+              <p class="report-date">Fecha: ${dayjs(venta?.fecha || new Date()).format("DD/MM/YYYY")}</p>
+              <span class="copy-badge">${copyLabel}</span>
+            </div>
+          </header>
+
+          <table class="data-table">
+            <tbody>
+              <tr>
+                <td class="label">Cliente:</td>
+                <td class="value-large">${escapeHtml(orden?.cliente_nombre || "-")}</td>
+                <td class="label">Documento:</td>
+                <td>${escapeHtml(orden?.cliente_documento || "-")}</td>
+              </tr>
+              <tr>
+                <td class="label">Telefono:</td>
+                <td class="value-large">${escapeHtml(orden?.cliente_telefono || "-")}</td>
+                <td class="label">Fecha ingreso:</td>
+                <td>${dayjs(orden?.fecha_creacion || venta?.fecha || new Date()).format("DD/MM/YYYY")}</td>
+              </tr>
+              <tr>
+                <td class="label">Equipo:</td>
+                <td class="value-large">${escapeHtml(orden?.equipo || "-")}</td>
+                <td class="label">N° Serie:</td>
+                <td>N/A</td>
+              </tr>
+              <tr>
+                <td class="label">Falla reportada:</td>
+                <td colspan="3">${escapeHtml(orden?.diagnostico_inicial || "-")}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="bar">DETALLE DEL DIAGNOSTICO Y REPARACION</div>
+          <div class="detail-space">
+            ${detalleDiagnosticoHtml || '<p class="detail-line">-</p>'}
+          </div>
+
+          <table class="totals">
+            <tbody>
+              <tr>
+                <td class="label">Importe de reparacion:</td>
+                <td class="value">${escapeHtml(`$${total.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)}</td>
+              </tr>
+            </tbody>
+            <tbody class="totals-final">
+              <tr>
+                <td class="label">TOTAL:</td>
+                <td class="value">${escapeHtml(`$${total.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="signatures">
+            <div class="sign">
+              <div class="sign-line"></div>
+              Firma del tecnico
+            </div>
+            <div class="sign">
+              <div class="sign-line"></div>
+              Firma del cliente
+            </div>
+          </div>
+        </section>
+      `
+    )
+    .join("");
   const html = `
     <!DOCTYPE html>
     <html lang="es">
       <head>
         <meta charset="UTF-8" />
-        <title>Factura Orden ${escapeHtml(orderNumber)}</title>
+        <title>Informe tecnico ${escapeHtml(orderNumber)}</title>
         <style>
-          body { font-family: Arial, sans-serif; margin: 28px; color: #0f172a; }
-          .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #0f172a; padding-bottom: 12px; }
-          .brand { display: flex; align-items: center; gap: 12px; }
-          .brand img { width: 68px; height: 68px; object-fit: cover; border-radius: 8px; }
-          .brand h1 { margin: 0; font-size: 22px; }
-          .muted { color: #475569; margin: 2px 0; font-size: 13px; }
-          .section { margin-top: 16px; }
-          table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-          th, td { border: 1px solid #cbd5e1; padding: 8px; font-size: 12px; }
-          th { background: #e2e8f0; text-align: left; }
-          .total { text-align: right; font-size: 16px; font-weight: bold; margin-top: 12px; }
-          .fiscal-box { background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px; margin-top: 10px; }
+          * { box-sizing: border-box; }
+          body { font-family: Arial, sans-serif; margin: 0; padding: 12px; background: #efefef; color: #111; }
+          .sheet { max-width: 920px; margin: 0 auto; border: 1px solid #222; background: #fff; }
+          .sheet + .sheet { margin-top: 14px; }
+          .header { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #222; }
+          .header-left, .header-right { padding: 12px; min-height: 132px; }
+          .header-left { border-right: 1px solid #222; }
+          .brand { display: flex; gap: 10px; align-items: flex-start; }
+          .brand img { width: 62px; height: 46px; object-fit: contain; }
+          .company-name { margin: 10px 0 4px; font-size: 29px; font-weight: 800; letter-spacing: 0.3px; }
+          .company-line { margin: 1px 0; font-size: 13px; }
+          .x-box { width: 40px; height: 40px; border: 2px solid #222; margin: 0 auto 8px; text-align: center; line-height: 36px; font-size: 31px; font-weight: 700; }
+          .report-title { margin: 0; text-align: center; font-size: 40px; font-weight: 900; letter-spacing: 1px; }
+          .report-number { margin: 2px 0 0; text-align: center; font-size: 35px; font-weight: 700; }
+          .report-date { margin: 6px 0 0; text-align: center; font-size: 19px; }
+          .copy-badge { display: table; margin: 8px auto 0; border: 1px solid #999; padding: 2px 8px; font-size: 11px; }
+          .data-table { width: 100%; border-collapse: collapse; }
+          .data-table td { border: 1px solid #bbb; padding: 4px 6px; font-size: 13px; }
+          .data-table td.label { width: 21%; background: #f2f2f2; font-weight: 700; }
+          .data-table td.value-large { width: 31%; }
+          .bar { background: #050505; color: #fff; font-weight: 700; text-transform: uppercase; font-size: 13px; padding: 4px 8px; }
+          .detail-space { min-height: 170px; padding: 8px; border-bottom: 1px solid #bbb; }
+          .detail-line { margin: 0 0 6px; font-size: 13px; line-height: 1.35; }
+          .totals { width: 100%; border-collapse: collapse; }
+          .totals td { border: 1px solid #bbb; padding: 2px 8px; font-size: 14px; }
+          .totals .label { text-align: right; font-weight: 700; }
+          .totals .value { width: 28%; text-align: right; font-weight: 700; }
+          .totals-final td { background: #050505; color: #fff; font-size: 30px; font-weight: 900; padding: 5px 8px; }
+          .signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 18px 16px 14px; }
+          .sign { text-align: center; font-size: 12px; }
+          .sign-line { border-top: 1px solid #222; width: 65%; margin: 0 auto 3px; }
+          @media print {
+            body { background: #fff; padding: 0; margin: 0; }
+            .sheet { border: none; max-width: 100%; }
+            .sheet + .sheet { margin-top: 0; }
+            .copy-break { page-break-after: always; }
+          }
         </style>
       </head>
       <body>
-        <header class="header">
-          <div class="brand">
-            <img src="${logoCge}" alt="Logo CGE Computacion" />
-            <div>
-              <h1>${escapeHtml(emisorNombre)}</h1>
-              <p class="muted">Factura de servicio tecnico</p>
-            </div>
-          </div>
-          <div>
-            <p class="muted"><b>Comprobante:</b> ${comprobanteNumero}</p>
-            <p class="muted"><b>Fecha:</b> ${dayjs(venta?.fecha || new Date()).format("DD/MM/YYYY HH:mm")}</p>
-          </div>
-        </header>
-
-        ${isAfip ? `<section class="section fiscal-box">${fiscalBlock}</section>` : ""}
-
-        <section class="section">
-          <p class="muted"><b>Orden:</b> ${escapeHtml(orderNumber)}</p>
-          <p class="muted"><b>Cliente:</b> ${orden?.cliente_nombre || "-"}</p>
-          <p class="muted"><b>Equipo:</b> ${orden?.equipo || "-"}</p>
-          <p class="muted"><b>Estado actual:</b> ${orden?.estado_actual || "-"}</p>
-        </section>
-
-        <section class="section">
-          <table>
-            <thead>
-              <tr>
-                <th>Descripcion</th>
-                <th>Cantidad</th>
-                <th>Precio unitario</th>
-                <th>Subtotal</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${items
-                .map(
-                  (item) => `
-                    <tr>
-                      <td>${item.descripcion || "-"}</td>
-                      <td>${Number(item.cantidad).toFixed(2)}</td>
-                      <td>$${Number(item.precio_unitario).toFixed(2)}</td>
-                      <td>$${(Number(item.cantidad || 0) * Number(item.precio_unitario || 0)).toFixed(2)}</td>
-                    </tr>
-                  `
-                )
-                .join("")}
-            </tbody>
-          </table>
-          <p class="total">TOTAL: $${total.toFixed(2)}</p>
-        </section>
+        ${copiesHtml}
       </body>
     </html>
   `;
@@ -420,7 +487,7 @@ function OrdenesPage() {
   const [estadoFilter, setEstadoFilter] = useState("");
   const [prioridadFilter, setPrioridadFilter] = useState("");
   const [demoradaFilter, setDemoradaFilter] = useState(false);
-  const [sortBy, setSortBy] = useState("prioridad");
+  const [sortBy, setSortBy] = useState("fecha_creacion");
   const [sortDirection, setSortDirection] = useState("desc");
   const [ordenForm, setOrdenForm] = useState(initialOrden);
   const [editingId, setEditingId] = useState(null);
@@ -433,9 +500,11 @@ function OrdenesPage() {
   const [isFacturaOpen, setIsFacturaOpen] = useState(false);
   const [isLoadingFacturaOrden, setIsLoadingFacturaOrden] = useState(false);
   const [isLoadingPrintOrden, setIsLoadingPrintOrden] = useState(false);
+  const [facturaError, setFacturaError] = useState("");
   const [facturaForm, setFacturaForm] = useState(initialFacturaForm);
   const [facturaOrden, setFacturaOrden] = useState(null);
-  const [facturaError, setFacturaError] = useState("");
+  const [isPrimeraFacturaOrden, setIsPrimeraFacturaOrden] = useState(true);
+  const [facturaNotice, setFacturaNotice] = useState("");
   const [ultimaFacturaData, setUltimaFacturaData] = useState(null);
   const [isDispositivoManual, setIsDispositivoManual] = useState(false);
   const [isClienteModalOpen, setIsClienteModalOpen] = useState(false);
@@ -530,6 +599,15 @@ function OrdenesPage() {
         items: variables.itemsSnapshot
       };
 
+      const emailResult = venta?.reporte_tecnico_email;
+      if (emailResult?.sent) {
+        setFacturaNotice(`Factura generada. Email enviado a ${emailResult.to}.`);
+      } else if (emailResult) {
+        setFacturaNotice(`Factura generada, pero no se envió el email: ${mapEmailReasonToMessage(emailResult.reason)}.`);
+      } else {
+        setFacturaNotice("Factura generada. No se recibió estado de envío de email.");
+      }
+
       setUltimaFacturaData(facturaData);
       renderAndPrintFactura(facturaData);
     }
@@ -546,6 +624,13 @@ function OrdenesPage() {
     const direction = sortDirection === "asc" ? 1 : -1;
 
     return [...ordenes].sort((a, b) => {
+      const aEntregada = a.estado_actual === "entregada";
+      const bEntregada = b.estado_actual === "entregada";
+
+      if (aEntregada !== bEntregada) {
+        return aEntregada ? 1 : -1;
+      }
+
       if (sortBy === "prioridad") {
         const aRank = prioridadRank[a.prioridad] || 0;
         const bRank = prioridadRank[b.prioridad] || 0;
@@ -664,6 +749,12 @@ function OrdenesPage() {
         queryFn: () => api.ordenes.getById(editingId)
       });
 
+      const ventasOrden = await api.ventas.list({
+        origen: "orden",
+        orden_id: Number(detalleOrden.id)
+      });
+      setIsPrimeraFacturaOrden((ventasOrden || []).length === 0);
+
       setFacturaOrden(detalleOrden);
       setFacturaForm(initialFacturaForm);
       setIsFacturaOpen(true);
@@ -680,6 +771,7 @@ function OrdenesPage() {
         <div>
           <h2 className="page-title">Ordenes de reparacion</h2>
           <p className="status">ABM de ordenes con circuito tecnico y prioridades.</p>
+          {facturaNotice ? <p className="status">{facturaNotice}</p> : null}
         </div>
         <button onClick={openCreate}>Nueva orden</button>
       </div>
@@ -728,7 +820,7 @@ function OrdenesPage() {
             setEstadoFilter("");
             setPrioridadFilter("");
             setDemoradaFilter(false);
-            setSortBy("prioridad");
+            setSortBy("fecha_creacion");
             setSortDirection("desc");
           }}
         >
@@ -750,25 +842,32 @@ function OrdenesPage() {
                     <th>Nro</th>
                     <th>Cliente</th>
                     <th>Equipo</th>
+                    <th>Marca</th>
+                    <th>Modelo</th>
                     <th>Estado</th>
                     <th>Prioridad</th>
-                    <th>Creada</th>
+                    {/* <th>Creada</th> */}
                     <th>Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {ordenesOrdenadas.map((orden) => (
-                    <tr key={orden.id} className="orden-row">
+                    <tr
+                      key={orden.id}
+                      className={`orden-row ${orden.estado_actual === "entregada" ? "orden-row--entregada" : ""}`}
+                    >
                       <td>{formatOrderNumber(orden.nro_orden)}</td>
                       <td>{orden.cliente_nombre}</td>
                       <td>{orden.equipo}</td>
+                      <td>{orden.marca || "-"}</td>
+                      <td>{orden.modelo || "-"}</td>
                       <td>
-                        <span className={`orden-estado ${getEstadoClassName(orden.estado_actual)}`}>{orden.estado_actual}</span>
+                        <span className="orden-estado">{orden.estado_actual}</span>
                       </td>
-                      <td>
-                        <span className={`orden-prioridad ${getPrioridadClassName(orden.prioridad)}`}>{orden.prioridad}</span>
+                      <td className={`orden-prioridad-cell ${getPrioridadClassName(orden.prioridad)}`}>
+                        <span className="orden-prioridad">{orden.prioridad}</span>
                       </td>
-                      <td>{dayjs(orden.fecha_creacion).format("DD/MM/YYYY HH:mm")}</td>
+                      {/* <td>{dayjs(orden.fecha_creacion).format("DD/MM/YYYY HH:mm")}</td> */}
                       <td>
                         <div className="actions">
                           <button className="secondary" onClick={() => openDetail(orden)}>
@@ -1088,6 +1187,12 @@ function OrdenesPage() {
                 return;
               }
 
+              const montoFinalReparacion = Number(facturaForm.monto_final_reparacion);
+              if (isPrimeraFacturaOrden && (!Number.isFinite(montoFinalReparacion) || montoFinalReparacion <= 0)) {
+                setFacturaError("Debe ingresar el monto final de reparacion para la primera factura de esta orden.");
+                return;
+              }
+
               setFacturaError("");
 
               facturarOrdenMutation.mutate({
@@ -1100,6 +1205,7 @@ function OrdenesPage() {
                   impuestos: 0,
                   forma_pago: facturaForm.forma_pago,
                   monto_pagado: 0,
+                  monto_final_reparacion: isPrimeraFacturaOrden ? montoFinalReparacion : undefined,
                   items: facturaItemsPreview
                 },
                 ordenSnapshot: facturaOrden,
@@ -1130,6 +1236,22 @@ function OrdenesPage() {
                   </select>
                 </label>
               </div>
+              {isPrimeraFacturaOrden ? (
+                <label>
+                  Monto final de reparacion
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={facturaForm.monto_final_reparacion}
+                    onChange={(e) => setFacturaForm({ ...facturaForm, monto_final_reparacion: e.target.value })}
+                    placeholder="Ej: 45000"
+                    required
+                  />
+                </label>
+              ) : (
+                <p className="status">La orden ya tuvo una factura previa. No se vuelve a solicitar monto final.</p>
+              )}
             </section>
 
             <section className="card">
@@ -1193,15 +1315,17 @@ function OrdenesPage() {
                           <td>{item.tipo_item}</td>
                           <td>{item.descripcion}</td>
                           <td>{Number(item.cantidad).toFixed(2)}</td>
-                          <td>$0.00</td>
-                          <td>$0.00</td>
+                          <td>-</td>
+                          <td>-</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               )}
-              <p className="status">No se solicita importe final: la factura se genera con items en $0 para completar la orden.</p>
+              <p className="status">
+                Los subtotales por detalle se muestran nulos y solo se imprime el total final de reparacion.
+              </p>
             </section>
 
             <button type="submit" className="secondary" disabled={facturarOrdenMutation.isPending}>

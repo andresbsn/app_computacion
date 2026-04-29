@@ -363,6 +363,14 @@ tbody tr:hover {
   background: rgba(var(--accent-1-rgb), 0.1);
 }
 
+.orden-row--entregada td {
+  background: rgba(22, 101, 52, 0.2);
+}
+
+.orden-row--entregada:hover td {
+  background: rgba(22, 101, 52, 0.28);
+}
+
 .orden-estado,
 .orden-prioridad {
   display: inline-block;
@@ -374,40 +382,37 @@ tbody tr:hover {
   letter-spacing: 0.4px;
 }
 
-.orden-estado--red {
-  color: #fecaca;
-  background: rgba(153, 27, 27, 0.35);
-  border: 1px solid rgba(248, 113, 113, 0.5);
+.orden-estado {
+  color: inherit;
+  background: transparent;
+  border: none;
 }
 
-.orden-estado--yellow {
-  color: #fde68a;
-  background: rgba(161, 98, 7, 0.35);
-  border: 1px solid rgba(251, 191, 36, 0.5);
+.orden-prioridad-cell {
+  transition: background-color 0.18s ease;
 }
 
-.orden-estado--green {
-  color: #bbf7d0;
-  background: rgba(21, 128, 61, 0.35);
-  border: 1px solid rgba(74, 222, 128, 0.5);
+.orden-prioridad-cell .orden-prioridad {
+  color: inherit;
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 0;
 }
 
-.orden-prioridad--high {
+.orden-prioridad-cell.orden-prioridad--high {
   color: #fecaca;
   background: rgba(185, 28, 28, 0.35);
-  border: 1px solid rgba(248, 113, 113, 0.55);
 }
 
-.orden-prioridad--medium {
+.orden-prioridad-cell.orden-prioridad--medium {
   color: #fed7aa;
   background: rgba(194, 65, 12, 0.35);
-  border: 1px solid rgba(251, 146, 60, 0.55);
 }
 
-.orden-prioridad--low {
+.orden-prioridad-cell.orden-prioridad--low {
   color: #bbf7d0;
   background: rgba(22, 101, 52, 0.35);
-  border: 1px solid rgba(74, 222, 128, 0.55);
 }
 
 .status {

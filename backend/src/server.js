@@ -111,6 +111,12 @@ const bootstrapAdminSchema = z.object({
   password: z.string().min(6).max(120)
 });
 
+const smtpTestSchema = z.object({
+  to: z.string().trim().email().max(120).optional(),
+  subject: z.string().trim().max(180).optional(),
+  message: z.string().trim().max(3000).optional()
+});
+
 const nullableDateOnlySchema = z.preprocess(
   (value) => {
     if (value === undefined || value === null || value === "") {
@@ -223,6 +229,7 @@ const ventaCreateSchema = z
     impuestos: z.coerce.number().min(0).optional().default(0),
     forma_pago: z.enum(FORMA_PAGO),
     monto_pagado: z.coerce.number().min(0).optional().nullable(),
+    monto_final_reparacion: z.coerce.number().min(0).optional().nullable(),
     items: z.array(ventaItemSchema).min(1)
   })
   .superRefine((data, ctx) => {
@@ -256,8 +263,6 @@ const DATE_FORMATTER = new Intl.DateTimeFormat("es-AR", {
   month: "2-digit",
   year: "numeric"
 });
-
-const ESTADOS_REPORTE_TECNICO = new Set(["lista_para_entrega", "entregada"]);
 
 let smtpTransporter = null;
 
@@ -346,7 +351,7 @@ const getSmtpTransporter = () => {
   return smtpTransporter;
 };
 
-const buildTechnicalReportHtml = ({ venta, comprobante, orden, cliente, total }) => `
+const buildTechnicalReportHtml = ({ venta, comprobante, orden, cliente, total, detalleFacturado = [] }) => `
   <!DOCTYPE html>
   <html lang="es">
     <head>
@@ -367,7 +372,8 @@ const buildTechnicalReportHtml = ({ venta, comprobante, orden, cliente, total })
         td { border: 1px solid #bcbcbc; padding: 8px 10px; font-size: 24px; }
         td.label { width: 20%; font-weight: 700; background: #f8f8f8; }
         .bar { background: #0c0c0c; color: #fff; text-transform: uppercase; font-weight: 700; padding: 8px 10px; font-size: 22px; }
-        .detail-space { min-height: 220px; border-bottom: 1px solid #ccc; }
+        .detail-space { min-height: 220px; border-bottom: 1px solid #ccc; padding: 8px 10px; }
+        .detail-line { margin: 0 0 6px; font-size: 20px; line-height: 1.35; }
         .totals td { font-size: 30px; }
         .totals-final td { background: #0c0c0c; color: #fff; font-weight: 900; font-size: 40px; }
       </style>
@@ -417,7 +423,13 @@ const buildTechnicalReportHtml = ({ venta, comprobante, orden, cliente, total })
         </table>
 
         <div class="bar">Detalle del diagnóstico y reparación</div>
-        <div class="detail-space"></div>
+        <div class="detail-space">
+          ${detalleFacturado.length
+            ? detalleFacturado
+                .map((detalle) => `<p class="detail-line">${escapeHtml(detalle).replace(/\n/g, "<br />")}</p>`)
+                .join("")
+            : '<p class="detail-line">-</p>'}
+        </div>
 
         <table>
           <tbody class="totals">
@@ -473,6 +485,20 @@ const getTechnicalReportContext = async (ventaId) => {
     return null;
   }
 
+  const detalleItemsResult = await pool.query(
+    `
+      SELECT descripcion
+      FROM ${schema}.venta_items
+      WHERE venta_id = $1
+      ORDER BY id ASC
+    `,
+    [ventaId]
+  );
+
+  const detalleFacturado = detalleItemsResult.rows
+    .map((item) => String(item.descripcion || "").trim())
+    .filter((detalle) => detalle.length > 0);
+
   const row = ventaResult.rows[0];
   return {
     venta: {
@@ -498,7 +524,8 @@ const getTechnicalReportContext = async (ventaId) => {
       telefono: row.cliente_telefono,
       email: row.cliente_email,
       documento: row.cliente_documento
-    }
+    },
+    detalle_facturado: detalleFacturado
   };
 };
 
@@ -517,14 +544,15 @@ const sendTechnicalReportEmail = async (report) => {
     comprobante: report.comprobante,
     orden: report.orden,
     cliente: report.cliente,
-    total: report.venta.total
+    total: report.venta.total,
+    detalleFacturado: report.detalle_facturado
   });
 
   await transporter.sendMail({
     from: config.smtp.from,
     to: report.cliente.email,
-    subject: `Informe técnico - Orden #${report.orden.nro_orden}`,
-    text: `Adjuntamos el informe técnico de la orden #${report.orden.nro_orden}. Total: ${formatCurrency(report.venta.total)}.`,
+    subject: `Nº ${report.orden.nro_orden} - lista para retirar`,
+    text: `Tu orden ${report.orden.nro_orden} ya está lista para retirar. Adjuntamos el comprobante generado. Total: ${formatCurrency(report.venta.total)}.`,
     html,
     attachments: [
       {
@@ -722,6 +750,74 @@ app.get("/auth/me", (req, res) => {
   res.json({ user: req.user });
 });
 
+app.post("/smtp/test", async (req, res) => {
+  try {
+    const body = smtpTestSchema.parse(req.body || {});
+    const transporter = getSmtpTransporter();
+
+    if (!transporter || !config.smtp.from) {
+      return res.status(400).json({
+        ok: false,
+        error: "SMTP no configurado",
+        details: {
+          hasUser: Boolean(config.smtp.user),
+          hasPass: Boolean(config.smtp.pass),
+          hasFrom: Boolean(config.smtp.from)
+        }
+      });
+    }
+
+    await transporter.verify();
+
+    const to = body.to || config.smtp.user;
+    const subject = body.subject || `SMTP test app_computacion - ${new Date().toISOString()}`;
+    const message =
+      body.message ||
+      `Prueba de SMTP exitosa.\nUsuario autenticado: ${config.smtp.user}\nDisparado por: ${req.user?.email || "usuario"}`;
+
+    const info = await transporter.sendMail({
+      from: config.smtp.from,
+      to,
+      subject,
+      text: message,
+      html: `<p>${escapeHtml(message).replace(/\n/g, "<br />")}</p>`
+    });
+
+    res.json({
+      ok: true,
+      message: "Email de prueba enviado",
+      smtp: {
+        host: config.smtp.host,
+        port: config.smtp.port,
+        secure: config.smtp.secure,
+        from: config.smtp.from
+      },
+      result: {
+        to,
+        messageId: info.messageId,
+        accepted: info.accepted,
+        rejected: info.rejected,
+        response: info.response
+      }
+    });
+  } catch (error) {
+    if (handleZodError(error, res)) {
+      return;
+    }
+
+    console.error("[smtp-test] Error:", error);
+    res.status(500).json({
+      ok: false,
+      error: "Fallo prueba SMTP",
+      message: error.message,
+      code: error.code || null,
+      responseCode: error.responseCode || null,
+      response: error.response || null,
+      command: error.command || null
+    });
+  }
+});
+
 app.get("/clientes/:id/cuenta-corriente", async (req, res) => {
   const id = parseId(req.params.id, res);
   if (!id) {
@@ -870,6 +966,7 @@ app.get("/ventas", async (req, res) => {
   try {
     const tipo = req.query.tipo ? req.query.tipo.toString().trim() : "";
     const origen = req.query.origen ? req.query.origen.toString().trim() : "";
+    const ordenIdRaw = req.query.orden_id;
     const search = (req.query.search || "").toString().trim();
 
     const filters = [];
@@ -889,6 +986,15 @@ app.get("/ventas", async (req, res) => {
       }
       params.push(origen);
       filters.push(`v.origen = $${params.length}`);
+    }
+
+    if (ordenIdRaw !== undefined) {
+      const ordenId = Number(ordenIdRaw);
+      if (!Number.isInteger(ordenId) || ordenId <= 0) {
+        return res.status(400).json({ error: "orden_id invalido" });
+      }
+      params.push(ordenId);
+      filters.push(`v.orden_id = $${params.length}`);
     }
 
     if (search) {
@@ -994,20 +1100,9 @@ app.post("/ventas", async (req, res) => {
     const body = ventaCreateSchema.parse(req.body);
 
     const subtotalCalculado = body.items.reduce((acc, item) => acc + item.cantidad * item.precio_unitario, 0);
-    const total = subtotalCalculado - body.descuento + body.impuestos;
-
-    if (total < 0) {
-      return res.status(400).json({ error: "Total invalido" });
-    }
-
-    const montoPagado = body.monto_pagado ?? total;
-    if (montoPagado > total) {
-      return res.status(400).json({ error: "monto_pagado no puede ser mayor al total" });
-    }
-
-    const saldoPendiente = total - montoPagado;
 
     let clienteIdFinal = body.cliente_id ?? null;
+    let esPrimeraFacturaOrden = false;
 
     const venta = await withClient(async (client) => {
       await client.query("BEGIN");
@@ -1020,6 +1115,16 @@ app.post("/ventas", async (req, res) => {
             return { error: { code: 404, message: "Orden no encontrada" } };
           }
 
+          const facturasPreviasOrdenResult = await client.query(
+            `
+              SELECT COUNT(*)::INT AS total
+              FROM ${schema}.ventas
+              WHERE origen = 'orden' AND orden_id = $1
+            `,
+            [body.orden_id]
+          );
+          esPrimeraFacturaOrden = Number(facturasPreviasOrdenResult.rows[0]?.total || 0) === 0;
+
           const clienteOrdenId = Number(ordenCheck.rows[0].cliente_id);
 
           if (body.cliente_id && clienteOrdenId !== body.cliente_id) {
@@ -1031,6 +1136,29 @@ app.post("/ventas", async (req, res) => {
             clienteIdFinal = clienteOrdenId;
           }
         }
+
+        let totalFinal = subtotalCalculado - body.descuento + body.impuestos;
+        if (body.origen === "orden" && esPrimeraFacturaOrden) {
+          const montoFinalReparacion = Number(body.monto_final_reparacion);
+          if (!Number.isFinite(montoFinalReparacion) || montoFinalReparacion <= 0) {
+            await client.query("ROLLBACK");
+            return { error: { code: 400, message: "Debe ingresar monto_final_reparacion para la primera factura de una orden" } };
+          }
+          totalFinal = montoFinalReparacion;
+        }
+
+        if (totalFinal < 0) {
+          await client.query("ROLLBACK");
+          return { error: { code: 400, message: "Total invalido" } };
+        }
+
+        const montoPagado = body.monto_pagado ?? totalFinal;
+        if (montoPagado > totalFinal) {
+          await client.query("ROLLBACK");
+          return { error: { code: 400, message: "monto_pagado no puede ser mayor al total" } };
+        }
+
+        const saldoPendiente = totalFinal - montoPagado;
 
         if (!clienteIdFinal && saldoPendiente > 0) {
           await client.query("ROLLBACK");
@@ -1062,7 +1190,7 @@ app.post("/ventas", async (req, res) => {
           subtotalCalculado,
           body.descuento,
           body.impuestos,
-          total,
+          totalFinal,
           body.forma_pago
         ]);
 
@@ -1152,7 +1280,8 @@ app.post("/ventas", async (req, res) => {
         return {
           ...ventaCreada,
           comprobante: comprobanteResult.rows[0],
-          saldo_pendiente: saldoPendiente
+          saldo_pendiente: saldoPendiente,
+          es_primera_factura_orden: esPrimeraFacturaOrden
         };
       } catch (error) {
         await client.query("ROLLBACK");
@@ -1168,13 +1297,20 @@ app.post("/ventas", async (req, res) => {
     if (venta.origen === "orden") {
       try {
         const technicalReport = await getTechnicalReportContext(venta.id);
-        if (technicalReport && ESTADOS_REPORTE_TECNICO.has(technicalReport.orden.estado_actual)) {
+        if (technicalReport) {
           reporteTecnicoEmail = await sendTechnicalReportEmail(technicalReport);
+          if (!reporteTecnicoEmail.sent) {
+            console.warn(
+              `[email][orden] No enviado para venta ${venta.id} / orden ${technicalReport.orden.nro_orden}. reason=${reporteTecnicoEmail.reason}`
+            );
+          }
         } else {
-          reporteTecnicoEmail = { sent: false, reason: "orden_no_finalizada" };
+          reporteTecnicoEmail = { sent: false, reason: "reporte_no_encontrado" };
+          console.warn(`[email][orden] No enviado para venta ${venta.id}. reason=reporte_no_encontrado`);
         }
       } catch (mailError) {
         reporteTecnicoEmail = { sent: false, reason: "email_error", message: mailError.message };
+        console.error(`[email][orden] Error enviando para venta ${venta.id}:`, mailError);
       }
     }
 
