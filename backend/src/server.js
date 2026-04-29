@@ -2,12 +2,14 @@ import express from "express";
 import cors from "cors";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import nodemailer from "nodemailer";
 import { config } from "./config.js";
 import { pool, withClient } from "./db.js";
 import { z } from "zod";
 
 const app = express();
 const schema = config.db.schema;
+const CLIENTE_CONDICIONES_IVA = ["consumidor_final", "inscripto", "exento"];
 
 const clienteCreateSchema = z.object({
   nombre: z.string().trim().min(1),
@@ -15,6 +17,10 @@ const clienteCreateSchema = z.object({
   email: z.string().trim().email().max(120).optional().nullable(),
   documento: z.string().trim().max(40).optional().nullable(),
   direccion: z.string().trim().optional().nullable(),
+  ciudad: z.string().trim().max(120).optional().nullable(),
+  provincia: z.string().trim().max(120).optional().nullable(),
+  cuit: z.string().trim().max(20).optional().nullable(),
+  condicion_iva: z.enum(CLIENTE_CONDICIONES_IVA).optional().default("consumidor_final"),
   observaciones: z.string().trim().optional().nullable()
 });
 
@@ -240,6 +246,21 @@ const numeroComprobantePrefix = {
   afip: "AFIP-PEND"
 };
 
+const MONEY_FORMATTER = new Intl.NumberFormat("es-AR", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+});
+
+const DATE_FORMATTER = new Intl.DateTimeFormat("es-AR", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric"
+});
+
+const ESTADOS_REPORTE_TECNICO = new Set(["lista_para_entrega", "entregada"]);
+
+let smtpTransporter = null;
+
 const nextComprobanteNumber = async (client, tipo) => {
   const result = await client.query(
     `
@@ -271,6 +292,250 @@ const toNullable = (value) => {
 
   const trimmed = typeof value === "string" ? value.trim() : value;
   return trimmed === "" ? null : trimmed;
+};
+
+const escapeHtml = (value) =>
+  String(value ?? "-")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+
+const formatCurrency = (amount) => `$${MONEY_FORMATTER.format(Number(amount || 0))}`;
+
+const formatDateOnly = (value) => {
+  if (!value) {
+    return "-";
+  }
+
+  return DATE_FORMATTER.format(new Date(value));
+};
+
+const mapEstadoToLabel = (estado) => {
+  const labels = {
+    ingresada: "Ingresada",
+    en_diagnostico: "En diagnóstico",
+    en_reparacion: "En reparación",
+    esperando_repuesto: "Esperando repuesto",
+    lista_para_entrega: "Finalizado",
+    entregada: "Entregada",
+    cancelada: "Cancelada"
+  };
+
+  return labels[estado] || estado || "-";
+};
+
+const getSmtpTransporter = () => {
+  if (!config.smtp.user || !config.smtp.pass) {
+    return null;
+  }
+
+  if (!smtpTransporter) {
+    smtpTransporter = nodemailer.createTransport({
+      host: config.smtp.host,
+      port: config.smtp.port,
+      secure: config.smtp.secure,
+      auth: {
+        user: config.smtp.user,
+        pass: config.smtp.pass
+      }
+    });
+  }
+
+  return smtpTransporter;
+};
+
+const buildTechnicalReportHtml = ({ venta, comprobante, orden, cliente, total }) => `
+  <!DOCTYPE html>
+  <html lang="es">
+    <head>
+      <meta charset="UTF-8" />
+      <title>Informe técnico N° ${escapeHtml(comprobante.numero)}</title>
+      <style>
+        body { font-family: Arial, sans-serif; background: #efefef; margin: 0; padding: 16px; color: #111; }
+        .sheet { max-width: 920px; margin: 0 auto; border: 1px solid #444; background: #fff; }
+        .header { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #444; }
+        .cell { padding: 14px; border-right: 1px solid #444; }
+        .cell:last-child { border-right: none; }
+        .brand-title { font-size: 36px; margin: 0 0 8px; font-weight: 800; }
+        .muted { margin: 4px 0; font-size: 18px; }
+        .report-title { text-align: center; margin: 0; font-size: 48px; font-weight: 900; letter-spacing: 1px; }
+        .report-sub { text-align: center; font-size: 34px; margin: 12px 0 0; font-weight: 700; }
+        .copy-label { display: inline-block; padding: 6px 10px; border: 1px solid #999; border-radius: 4px; font-size: 12px; margin-top: 8px; }
+        table { width: 100%; border-collapse: collapse; }
+        td { border: 1px solid #bcbcbc; padding: 8px 10px; font-size: 24px; }
+        td.label { width: 20%; font-weight: 700; background: #f8f8f8; }
+        .bar { background: #0c0c0c; color: #fff; text-transform: uppercase; font-weight: 700; padding: 8px 10px; font-size: 22px; }
+        .detail-space { min-height: 220px; border-bottom: 1px solid #ccc; }
+        .totals td { font-size: 30px; }
+        .totals-final td { background: #0c0c0c; color: #fff; font-weight: 900; font-size: 40px; }
+      </style>
+    </head>
+    <body>
+      <section class="sheet">
+        <header class="header">
+          <div class="cell">
+            <h1 class="brand-title">${escapeHtml(config.workshop.companyName)}</h1>
+            <p class="muted">${escapeHtml(config.workshop.ownerName)}</p>
+            <p class="muted">${escapeHtml(config.workshop.address)}</p>
+            <p class="muted">Tel: ${escapeHtml(config.workshop.phone)}</p>
+          </div>
+          <div class="cell" style="text-align:center;">
+            <h2 class="report-title">INFORME TÉCNICO</h2>
+            <p class="report-sub">N° ${escapeHtml(comprobante.numero || venta.id)}</p>
+            <p class="muted"><b>Fecha:</b> ${escapeHtml(formatDateOnly(comprobante.fecha_emision || venta.fecha))}</p>
+            <span class="copy-label">COPIA CLIENTE</span>
+          </div>
+        </header>
+
+        <table>
+          <tbody>
+            <tr>
+              <td class="label">Cliente:</td>
+              <td>${escapeHtml(cliente.nombre)}</td>
+              <td class="label">Documento:</td>
+              <td>${escapeHtml(cliente.documento || "-")}</td>
+            </tr>
+            <tr>
+              <td class="label">Teléfono:</td>
+              <td>${escapeHtml(cliente.telefono || "-")}</td>
+              <td class="label">Fecha ingreso:</td>
+              <td>${escapeHtml(formatDateOnly(orden.fecha_ingreso))}</td>
+            </tr>
+            <tr>
+              <td class="label">Equipo:</td>
+              <td>${escapeHtml(orden.equipo || "-")}</td>
+              <td class="label">Estado:</td>
+              <td>${escapeHtml(mapEstadoToLabel(orden.estado_actual))}</td>
+            </tr>
+            <tr>
+              <td class="label">Falla reportada:</td>
+              <td colspan="3">${escapeHtml(orden.falla_reportada || "-")}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="bar">Detalle del diagnóstico y reparación</div>
+        <div class="detail-space"></div>
+
+        <table>
+          <tbody class="totals">
+            <tr>
+              <td style="text-align:right;"><b>Importe de reparación:</b></td>
+              <td style="text-align:right; width:28%;"><b>${escapeHtml(formatCurrency(total))}</b></td>
+            </tr>
+          </tbody>
+          <tbody class="totals-final">
+            <tr>
+              <td style="text-align:right;">TOTAL:</td>
+              <td style="text-align:right; width:28%;">${escapeHtml(formatCurrency(total))}</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </body>
+  </html>
+`;
+
+const getTechnicalReportContext = async (ventaId) => {
+  const ventaResult = await pool.query(
+    `
+      SELECT
+        v.id,
+        v.fecha,
+        v.total,
+        cb.numero AS comprobante_numero,
+        cb.tipo AS comprobante_tipo,
+        cb.fecha_emision AS comprobante_fecha,
+        o.id AS orden_id,
+        o.nro_orden,
+        o.estado_actual,
+        o.equipo,
+        o.diagnostico_inicial,
+        o.fecha_creacion AS orden_fecha_ingreso,
+        c.nombre AS cliente_nombre,
+        c.telefono AS cliente_telefono,
+        c.email AS cliente_email,
+        c.documento AS cliente_documento
+      FROM ${schema}.ventas v
+      JOIN ${schema}.ordenes_reparacion o ON o.id = v.orden_id
+      LEFT JOIN ${schema}.clientes c ON c.id = o.cliente_id
+      LEFT JOIN ${schema}.comprobantes cb ON cb.venta_id = v.id
+      WHERE v.id = $1 AND v.origen = 'orden'
+      ORDER BY cb.id DESC
+      LIMIT 1
+    `,
+    [ventaId]
+  );
+
+  if (!ventaResult.rowCount) {
+    return null;
+  }
+
+  const row = ventaResult.rows[0];
+  return {
+    venta: {
+      id: row.id,
+      fecha: row.fecha,
+      total: Number(row.total || 0)
+    },
+    comprobante: {
+      numero: row.comprobante_numero || `VTA-${row.id}`,
+      tipo: row.comprobante_tipo || "local",
+      fecha_emision: row.comprobante_fecha || row.fecha
+    },
+    orden: {
+      id: row.orden_id,
+      nro_orden: row.nro_orden,
+      estado_actual: row.estado_actual,
+      equipo: row.equipo,
+      falla_reportada: row.diagnostico_inicial,
+      fecha_ingreso: row.orden_fecha_ingreso
+    },
+    cliente: {
+      nombre: row.cliente_nombre || "Cliente",
+      telefono: row.cliente_telefono,
+      email: row.cliente_email,
+      documento: row.cliente_documento
+    }
+  };
+};
+
+const sendTechnicalReportEmail = async (report) => {
+  if (!report?.cliente?.email) {
+    return { sent: false, reason: "cliente_sin_email" };
+  }
+
+  const transporter = getSmtpTransporter();
+  if (!transporter || !config.smtp.from) {
+    return { sent: false, reason: "smtp_no_configurado" };
+  }
+
+  const html = buildTechnicalReportHtml({
+    venta: report.venta,
+    comprobante: report.comprobante,
+    orden: report.orden,
+    cliente: report.cliente,
+    total: report.venta.total
+  });
+
+  await transporter.sendMail({
+    from: config.smtp.from,
+    to: report.cliente.email,
+    subject: `Informe técnico - Orden #${report.orden.nro_orden}`,
+    text: `Adjuntamos el informe técnico de la orden #${report.orden.nro_orden}. Total: ${formatCurrency(report.venta.total)}.`,
+    html,
+    attachments: [
+      {
+        filename: `informe-tecnico-orden-${report.orden.nro_orden}.html`,
+        content: html,
+        contentType: "text/html; charset=utf-8"
+      }
+    ]
+  });
+
+  return { sent: true, to: report.cliente.email };
 };
 
 const handleZodError = (error, res) => {
@@ -899,7 +1164,24 @@ app.post("/ventas", async (req, res) => {
       return res.status(venta.error.code).json({ error: venta.error.message });
     }
 
-    res.status(201).json(venta);
+    let reporteTecnicoEmail = null;
+    if (venta.origen === "orden") {
+      try {
+        const technicalReport = await getTechnicalReportContext(venta.id);
+        if (technicalReport && ESTADOS_REPORTE_TECNICO.has(technicalReport.orden.estado_actual)) {
+          reporteTecnicoEmail = await sendTechnicalReportEmail(technicalReport);
+        } else {
+          reporteTecnicoEmail = { sent: false, reason: "orden_no_finalizada" };
+        }
+      } catch (mailError) {
+        reporteTecnicoEmail = { sent: false, reason: "email_error", message: mailError.message };
+      }
+    }
+
+    res.status(201).json({
+      ...venta,
+      reporte_tecnico_email: reporteTecnicoEmail
+    });
   } catch (error) {
     if (handleZodError(error, res)) {
       return;
@@ -2020,12 +2302,12 @@ app.get("/clientes", async (req, res) => {
     if (search) {
       params.push(`%${search}%`);
       const index = params.length;
-      filters.push(`(nombre ILIKE $${index} OR telefono ILIKE $${index} OR documento ILIKE $${index})`);
+      filters.push(`(nombre ILIKE $${index} OR telefono ILIKE $${index} OR documento ILIKE $${index} OR cuit ILIKE $${index})`);
     }
 
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
     const query = `
-      SELECT id, nombre, telefono, email, documento, direccion, observaciones, activo, created_at
+      SELECT id, nombre, telefono, email, documento, direccion, ciudad, provincia, cuit, condicion_iva, observaciones, activo, created_at
       FROM ${schema}.clientes
       ${where}
       ORDER BY id DESC
@@ -2046,7 +2328,7 @@ app.get("/clientes/:id", async (req, res) => {
 
   try {
     const query = `
-      SELECT id, nombre, telefono, email, documento, direccion, observaciones, activo, created_at
+      SELECT id, nombre, telefono, email, documento, direccion, ciudad, provincia, cuit, condicion_iva, observaciones, activo, created_at
       FROM ${schema}.clientes
       WHERE id = $1
     `;
@@ -2066,9 +2348,9 @@ app.post("/clientes", async (req, res) => {
   try {
     const body = clienteCreateSchema.parse(req.body);
     const query = `
-      INSERT INTO ${schema}.clientes (nombre, telefono, email, documento, direccion, observaciones)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      RETURNING id, nombre, telefono, email, documento, direccion, observaciones, activo, created_at
+      INSERT INTO ${schema}.clientes (nombre, telefono, email, documento, direccion, ciudad, provincia, cuit, condicion_iva, observaciones)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING id, nombre, telefono, email, documento, direccion, ciudad, provincia, cuit, condicion_iva, observaciones, activo, created_at
     `;
 
     const result = await pool.query(query, [
@@ -2077,6 +2359,10 @@ app.post("/clientes", async (req, res) => {
       toNullable(body.email),
       toNullable(body.documento),
       toNullable(body.direccion),
+      toNullable(body.ciudad),
+      toNullable(body.provincia),
+      toNullable(body.cuit),
+      body.condicion_iva,
       toNullable(body.observaciones)
     ]);
 
@@ -2097,13 +2383,13 @@ app.put("/clientes/:id", async (req, res) => {
 
   try {
     const body = clienteUpdateSchema.parse(req.body);
-    const fields = ["nombre", "telefono", "email", "documento", "direccion", "observaciones"];
+    const fields = ["nombre", "telefono", "email", "documento", "direccion", "ciudad", "provincia", "cuit", "condicion_iva", "observaciones"];
 
     const sets = [];
     const values = [];
     for (const field of fields) {
       if (field in body) {
-        values.push(field === "nombre" ? body[field] : toNullable(body[field]));
+        values.push(field === "nombre" || field === "condicion_iva" ? body[field] : toNullable(body[field]));
         sets.push(`${field} = $${values.length}`);
       }
     }
@@ -2113,7 +2399,7 @@ app.put("/clientes/:id", async (req, res) => {
       UPDATE ${schema}.clientes
       SET ${sets.join(", ")}
       WHERE id = $${values.length}
-      RETURNING id, nombre, telefono, email, documento, direccion, observaciones, activo, created_at
+      RETURNING id, nombre, telefono, email, documento, direccion, ciudad, provincia, cuit, condicion_iva, observaciones, activo, created_at
     `;
 
     const result = await pool.query(query, values);

@@ -9,6 +9,9 @@ const AFIP_ISSUER_NAME = import.meta.env.VITE_AFIP_ISSUER_NAME || "Federico Zaba
 const AFIP_ISSUER_ADDRESS = import.meta.env.VITE_AFIP_ISSUER_ADDRESS || "Rivadavia 357";
 const AFIP_ISSUER_CITY = import.meta.env.VITE_AFIP_ISSUER_CITY || "Villa Ramallo";
 const AFIP_ISSUER_CUIL = import.meta.env.VITE_AFIP_ISSUER_CUIL || "20-30257623-9";
+const WORKSHOP_COMPANY_NAME = import.meta.env.VITE_TALLER_RAZON_SOCIAL || AFIP_ISSUER_NAME || "CGE Computacion";
+const WORKSHOP_COMPANY_ADDRESS = import.meta.env.VITE_TALLER_DIRECCION || AFIP_ISSUER_ADDRESS || "-";
+const WORKSHOP_COMPANY_PHONE = import.meta.env.VITE_TALLER_TELEFONO || "3407411490";
 
 const initialOrden = {
   cliente_id: "",
@@ -20,8 +23,20 @@ const initialOrden = {
   trajo_cargador: false,
   observaciones: "",
   estado_actual: "ingresada",
-  prioridad: "media",
-  fecha_estimada_entrega: ""
+  prioridad: "media"
+};
+
+const initialClienteForm = {
+  nombre: "",
+  telefono: "",
+  email: "",
+  documento: "",
+  direccion: "",
+  ciudad: "",
+  provincia: "",
+  cuit: "",
+  condicion_iva: "consumidor_final",
+  observaciones: ""
 };
 
 const initialMov = {
@@ -56,6 +71,8 @@ const escapeHtml = (value) =>
     .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#039;");
 
+const formatOrderNumber = (value) => `#${String(value ?? "-").padStart(7, "0")}`;
+
 const renderAndPrintOrden = (orden) => {
   const printWindow = window.open("", "_blank", "width=900,height=780");
   if (!printWindow) {
@@ -63,118 +80,111 @@ const renderAndPrintOrden = (orden) => {
   }
 
   const formatDate = (date) => (date ? dayjs(date).format("DD/MM/YYYY HH:mm") : "-");
-  const movimientos = orden?.movimientos || [];
-  const movimientosRows =
-    movimientos.length > 0
-      ? movimientos
-          .map(
-            (mov) => `
-              <tr>
-                <td>${escapeHtml(formatDate(mov.fecha))}</td>
-                <td>${escapeHtml(mov.estado)}</td>
-                <td>${escapeHtml(mov.detalle)}</td>
-              </tr>
-            `
-          )
-          .join("")
-      : `
-        <tr>
-          <td colspan="3">Sin movimientos registrados.</td>
-        </tr>
-      `;
+  const orderNumber = formatOrderNumber(orden?.nro_orden);
+  const legalText = `
+    Todo articulo(s)/aparato(s)/producto(s) y/o accesorio(s) dejado en el servicio tecnico de CGE Computacion para efectos de confeccionar un presupuesto y posteriormente ser reparado(s), el o los articulo(s) y/o accesorio(s), deberan ser retirados dentro de los 90 dias a partir de la fecha de recepcion reparado o no, caso contrario se considerara abandonado por su dueno, ART. 2525 y 2526 del codigo civil, por lo que el servicio tecnico dispondra del aparato como crea conveniente, inclusive venderlo y/o desarmarlo, renunciando el propietario a exigir suma alguna en concepto de compensacion y/o indemnizacion.
+    <br /><br />
+    Respecto a storage, almacenamiento de datos en discos externos y/o internos, el backup de la informacion que contienen los mismos es entera responsabilidad del usuario, exime a CGE Computacion de dicha tarea.
+  `;
 
   const copies = [
-    { label: "COPIA CLIENTE (INGRESO)", showRetiroFirmas: false },
-    { label: "COPIA TALLER (ENTREGA/RETIRO)", showRetiroFirmas: true }
+    { label: "Copia local", showSecurity: true, showIngreso: true },
+    { label: "Copia cliente", showSecurity: false, showIngreso: false }
   ];
 
   const copiesHtml = copies
     .map(
       (copy, index) => `
-      <section class="copy">
+      <section class="copy ${index === 0 ? "copy-break" : ""}">
         <header class="header">
           <div class="brand">
             <img src="${logoCge}" alt="Logo CGE Computacion" />
             <div>
-              <h1>Orden de reparacion</h1>
-              <p class="muted">CGE Computacion</p>
+              <h1>CGE COMPUTACION</h1>
+              <p class="muted"><b>Razon social:</b> ${escapeHtml(WORKSHOP_COMPANY_NAME)}</p>
+              <p class="muted"><b>Telefono:</b> ${escapeHtml(WORKSHOP_COMPANY_PHONE)}</p>
+              <p class="muted"><b>Direccion:</b> ${escapeHtml(WORKSHOP_COMPANY_ADDRESS)}</p>
+              <p class="muted"><b>Fecha de creacion:</b> ${escapeHtml(formatDate(orden?.fecha_creacion || new Date()))}</p>
             </div>
           </div>
-          <div class="right">
-            <p><b>Nro orden:</b> #${escapeHtml(orden?.nro_orden)}</p>
-            <p><b>Fecha:</b> ${escapeHtml(formatDate(orden?.fecha_creacion))}</p>
-            <p class="chip">${copy.label}</p>
+          <div class="badge">
+            <span class="badge-label">ORDEN</span>
+            <strong>${escapeHtml(orderNumber)}</strong>
           </div>
         </header>
 
-        <section class="grid two">
-          <div>
-            <h3>Cliente</h3>
-            <p><b>Nombre:</b> ${escapeHtml(orden?.cliente_nombre)}</p>
+        <section class="title-box">
+          <h2>FORMULARIO DE RECEPCION</h2>
+          <p>${copy.label}</p>
+        </section>
+
+        <section class="data-box">
+          <h3>DATOS DEL CLIENTE</h3>
+          <div class="rows">
+            <p><b>Nombre:</b> ${escapeHtml(orden?.cliente_nombre || "-")}</p>
+            <p><b>Documento:</b> ${escapeHtml(orden?.cliente_documento || "-")}</p>
             <p><b>Telefono:</b> ${escapeHtml(orden?.cliente_telefono || "-")}</p>
           </div>
-          <div>
-            <h3>Equipo</h3>
-            <p><b>Dispositivo:</b> ${escapeHtml(orden?.equipo)}</p>
-            <p><b>Marca / Modelo:</b> ${escapeHtml(orden?.marca || "-")} / ${escapeHtml(orden?.modelo || "-")}</p>
-            <p><b>Trajo cargador:</b> ${orden?.trajo_cargador ? "Si" : "No"}</p>
+        </section>
+
+        <section class="data-box">
+          <h3>DATOS DEL EQUIPO</h3>
+          <div class="rows">
+            <p><b>Equipo:</b> ${escapeHtml(orden?.equipo || "-")}</p>
+            <p><b>Falla/Detalle:</b> ${escapeHtml(orden?.diagnostico_inicial || "-")}</p>
+            <p><b>Deja cargador:</b> ${orden?.trajo_cargador ? "Si" : "No"}</p>
+            <p><b>Deja accesorios:</b> ${escapeHtml(orden?.observaciones || "No informado")}</p>
           </div>
         </section>
 
-        <section>
-          <h3>Recepcion y diagnostico inicial</h3>
-          <p class="box">${escapeHtml(orden?.diagnostico_inicial)}</p>
-          <p><b>Contrasena / PIN:</b> ${escapeHtml(orden?.contrasena_equipo || "-")}</p>
-          <p><b>Observaciones:</b> ${escapeHtml(orden?.observaciones || "-")}</p>
-        </section>
-
-        <section>
-          <h3>Estado actual</h3>
-          <p><b>Estado:</b> ${escapeHtml(orden?.estado_actual)}</p>
-          <p><b>Prioridad:</b> ${escapeHtml(orden?.prioridad)}</p>
-          <p><b>Entrega estimada:</b> ${escapeHtml(formatDate(orden?.fecha_estimada_entrega))}</p>
-        </section>
-
-        <section>
-          <h3>Movimientos</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Fecha</th>
-                <th>Estado</th>
-                <th>Detalle</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${movimientosRows}
-            </tbody>
-          </table>
-        </section>
-
-        <section class="firmas">
-          <div class="firma-linea">
-            <span>Firma cliente (ingreso)</span>
-          </div>
-          <div class="firma-linea">
-            <span>Firma recepcion / tecnico</span>
-          </div>
-          ${
-            copy.showRetiroFirmas
-              ? `
-                <div class="firma-linea">
-                  <span>Firma cliente (retiro)</span>
+        ${
+          copy.showSecurity
+            ? `
+              <section class="data-box">
+                <h3>SEGURIDAD DEL EQUIPO</h3>
+                <div class="security-grid">
+                  <div class="security-item security-item--clave">
+                    <span>CLAVE</span>
+                    <strong>${escapeHtml(orden?.contrasena_equipo || "No informada")}</strong>
+                  </div>
+                  <div class="security-item security-item--patron">
+                    <span>PATRON ANDROID</span>
+                    <strong>No informado</strong>
+                  </div>
                 </div>
-                <div class="firma-linea">
-                  <span>Firma entrega</span>
+              </section>
+            `
+            : ""
+        }
+
+        ${
+          copy.showIngreso
+            ? `
+              <section class="ingreso-box">
+                <h3>INGRESO DE EQUIPO</h3>
+                <div class="firma-group">
+                  <p>Firma:</p>
+                  <div class="linea"></div>
                 </div>
-              `
-              : ""
-          }
+                <div class="firma-group">
+                  <p>Aclaracion:</p>
+                  <div class="linea"></div>
+                </div>
+                <div class="firma-group">
+                  <p>Documento:</p>
+                  <div class="linea"></div>
+                </div>
+              </section>
+            `
+            : ""
+        }
+
+        <section class="terms-box">
+          ${legalText}
         </section>
 
-        <p class="terms">El cliente declara dejar el equipo para revision/reparacion y aceptar las condiciones del servicio tecnico.</p>
+        <p class="footer-note">© 2026 - Desarrollo de <u>AB Sistemas</u></p>
       </section>
-      ${index === 0 ? '<div class="cut-line"></div>' : ""}
     `
     )
     .join("");
@@ -184,33 +194,45 @@ const renderAndPrintOrden = (orden) => {
     <html lang="es">
       <head>
         <meta charset="UTF-8" />
-        <title>Orden #${escapeHtml(orden?.nro_orden)}</title>
+        <title>Orden ${escapeHtml(orderNumber)}</title>
         <style>
-          body { font-family: Arial, sans-serif; margin: 20px; color: #0f172a; }
-          .copy { border: 1px solid #0f172a; padding: 14px; }
-          .copy + .copy { margin-top: 18px; }
-          .header { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid #94a3b8; padding-bottom: 8px; margin-bottom: 10px; }
-          .brand { display: flex; align-items: center; gap: 10px; }
-          .brand img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; }
-          .brand h1 { margin: 0; font-size: 20px; text-transform: uppercase; }
-          .muted { margin: 2px 0 0; color: #475569; font-size: 12px; }
-          .right { text-align: right; font-size: 12px; }
-          .right p { margin: 2px 0; }
-          .chip { display: inline-block; margin-top: 4px; background: #e2e8f0; border: 1px solid #94a3b8; border-radius: 999px; padding: 2px 8px; font-weight: 700; }
-          .grid.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-          h3 { font-size: 13px; margin: 10px 0 6px; text-transform: uppercase; }
-          p { font-size: 12px; margin: 3px 0; }
-          .box { border: 1px solid #cbd5e1; min-height: 34px; padding: 6px; border-radius: 4px; }
-          table { width: 100%; border-collapse: collapse; margin-top: 6px; }
-          th, td { border: 1px solid #cbd5e1; padding: 5px; font-size: 11px; text-align: left; vertical-align: top; }
-          th { background: #e2e8f0; }
-          .firmas { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
-          .firma-linea { border-top: 1px solid #0f172a; padding-top: 5px; min-height: 22px; font-size: 11px; }
-          .terms { margin-top: 8px; font-size: 10px; color: #334155; }
-          .cut-line { border-top: 2px dashed #94a3b8; margin: 12px 0; }
+          * { box-sizing: border-box; }
+          body { font-family: Arial, sans-serif; margin: 0; padding: 14px; color: #0b1a33; background: #f3f4f6; }
+          .copy { width: 100%; max-width: 920px; margin: 0 auto; background: #f9fafb; border-radius: 10px; padding: 10px 10px 8px; border: 1px solid #d7dce4; }
+          .copy + .copy { margin-top: 16px; }
+          .header { display: flex; justify-content: space-between; gap: 12px; border-bottom: 4px solid #1f2937; padding-bottom: 8px; }
+          .brand { display: flex; gap: 10px; align-items: flex-start; }
+          .brand img { width: 120px; height: 80px; object-fit: contain; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; }
+          .brand h1 { margin: 0 0 4px; font-size: 36px; font-weight: 800; letter-spacing: 0.4px; line-height: 1; }
+          .muted { margin: 1px 0; font-size: 19px; color: #0f172a; line-height: 1.2; }
+          .badge { min-width: 178px; border-radius: 10px; padding: 10px 14px; background: linear-gradient(120deg, #4f46e5 0%, #06b6d4 100%); color: #fff; text-align: center; box-shadow: 0 10px 18px rgba(79, 70, 229, 0.22); }
+          .badge-label { display: block; font-size: 16px; font-weight: 700; letter-spacing: 1px; margin-bottom: 4px; }
+          .badge strong { font-size: 44px; letter-spacing: 1px; line-height: 1; }
+          .title-box { margin-top: 8px; border: 1px solid #1f2937; border-radius: 8px; padding: 6px 8px 4px; text-align: center; }
+          .title-box h2 { margin: 0; font-size: 42px; letter-spacing: 0.5px; text-transform: uppercase; line-height: 1.1; }
+          .title-box p { margin: 4px 0 0; font-size: 30px; color: #64748b; }
+          .data-box { margin-top: 8px; border: 1px solid #d5dae3; border-radius: 8px; padding: 8px 10px; background: #f8fafc; }
+          .data-box h3 { margin: 0; font-size: 34px; text-transform: uppercase; line-height: 1.1; border-bottom: 1px solid #c5ced8; padding-bottom: 4px; }
+          .rows { padding-top: 4px; }
+          .rows p { margin: 4px 0; font-size: 29px; line-height: 1.15; }
+          .rows b { display: inline-block; min-width: 180px; }
+          .security-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding-top: 6px; }
+          .security-item { border: 2px dashed #94a3b8; border-radius: 8px; text-align: center; padding: 6px 8px; background: #f8fafc; }
+          .security-item span { display: block; font-size: 20px; font-weight: 700; color: #475569; }
+          .security-item strong { display: block; margin-top: 3px; font-size: 28px; color: #0f172a; }
+          .security-item--clave { border-color: #818cf8; }
+          .security-item--patron { border-color: #34d399; }
+          .ingreso-box { margin-top: 8px; border-top: 1px dashed #9ca3af; padding-top: 4px; }
+          .ingreso-box h3 { margin: 0 0 4px; font-size: 28px; text-transform: uppercase; }
+          .firma-group { margin-bottom: 8px; }
+          .firma-group p { margin: 0 0 3px; font-size: 19px; }
+          .linea { border-bottom: 3px solid #1e293b; height: 22px; width: 52%; }
+          .terms-box { margin-top: 8px; border: 1px solid #f59e0b; background: #fff7e6; border-radius: 8px; padding: 8px; font-size: 15px; line-height: 1.35; color: #92400e; }
+          .footer-note { margin: 10px 0 0; text-align: center; font-size: 15px; color: #94a3b8; border-top: 1px solid #d1d5db; padding-top: 6px; }
           @media print {
-            body { margin: 0; padding: 10mm; }
-            .copy { break-inside: avoid; }
+            body { background: #fff; padding: 0; margin: 0; }
+            .copy { border: none; box-shadow: none; border-radius: 0; padding: 8mm; max-width: 100%; }
+            .copy-break { page-break-after: always; }
           }
         </style>
       </head>
@@ -245,13 +267,14 @@ const renderAndPrintFactura = ({ venta, orden, items }) => {
       <p class="muted"><b>CUIL:</b> ${escapeHtml(AFIP_ISSUER_CUIL)}</p>
     `
     : "";
+  const orderNumber = formatOrderNumber(orden?.nro_orden);
   const emisorNombre = isAfip ? AFIP_ISSUER_NAME : "CGE Computacion";
   const html = `
     <!DOCTYPE html>
     <html lang="es">
       <head>
         <meta charset="UTF-8" />
-        <title>Factura Orden #${orden?.nro_orden || "-"}</title>
+        <title>Factura Orden ${escapeHtml(orderNumber)}</title>
         <style>
           body { font-family: Arial, sans-serif; margin: 28px; color: #0f172a; }
           .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #0f172a; padding-bottom: 12px; }
@@ -285,7 +308,7 @@ const renderAndPrintFactura = ({ venta, orden, items }) => {
         ${isAfip ? `<section class="section fiscal-box">${fiscalBlock}</section>` : ""}
 
         <section class="section">
-          <p class="muted"><b>Orden:</b> #${orden?.nro_orden || "-"}</p>
+          <p class="muted"><b>Orden:</b> ${escapeHtml(orderNumber)}</p>
           <p class="muted"><b>Cliente:</b> ${orden?.cliente_nombre || "-"}</p>
           <p class="muted"><b>Equipo:</b> ${orden?.equipo || "-"}</p>
           <p class="muted"><b>Estado actual:</b> ${orden?.estado_actual || "-"}</p>
@@ -339,24 +362,39 @@ const mapOrdenToForm = (orden) => ({
   trajo_cargador: Boolean(orden.trajo_cargador),
   observaciones: orden.observaciones || "",
   estado_actual: orden.estado_actual || "ingresada",
-  prioridad: orden.prioridad || "media",
-  fecha_estimada_entrega: orden.fecha_estimada_entrega ? dayjs(orden.fecha_estimada_entrega).format("YYYY-MM-DDTHH:mm") : ""
+  prioridad: orden.prioridad || "media"
 });
 
-const getOrdenRowClassName = (estadoActual) => {
+const getEstadoClassName = (estadoActual) => {
   if (["ingresada", "en_diagnostico"].includes(estadoActual)) {
-    return "orden-row orden-row--red";
+    return "orden-estado--red";
   }
 
   if (["en_reparacion", "esperando_repuesto"].includes(estadoActual)) {
-    return "orden-row orden-row--yellow";
+    return "orden-estado--yellow";
   }
 
   if (["lista_para_entrega", "entregada"].includes(estadoActual)) {
-    return "orden-row orden-row--green";
+    return "orden-estado--green";
   }
 
-  return "orden-row";
+  return "";
+};
+
+const getPrioridadClassName = (prioridad) => {
+  if (["urgente", "alta"].includes(prioridad)) {
+    return "orden-prioridad--high";
+  }
+
+  if (prioridad === "media") {
+    return "orden-prioridad--medium";
+  }
+
+  if (prioridad === "baja") {
+    return "orden-prioridad--low";
+  }
+
+  return "";
 };
 
 const prioridadRank = {
@@ -400,6 +438,9 @@ function OrdenesPage() {
   const [facturaError, setFacturaError] = useState("");
   const [ultimaFacturaData, setUltimaFacturaData] = useState(null);
   const [isDispositivoManual, setIsDispositivoManual] = useState(false);
+  const [isClienteModalOpen, setIsClienteModalOpen] = useState(false);
+  const [clienteForm, setClienteForm] = useState(initialClienteForm);
+  const [editingOrderNumber, setEditingOrderNumber] = useState(null);
 
   const clientesQuery = useQuery({ queryKey: ["clientes"], queryFn: () => api.clientes.list("") });
   const marcasQuery = useQuery({ queryKey: ["marcas"], queryFn: () => api.marcas.list("") });
@@ -415,6 +456,18 @@ function OrdenesPage() {
       })
   });
 
+  const createClienteMutation = useMutation({
+    mutationFn: (payload) => api.clientes.create(payload),
+    onSuccess: (clienteCreado) => {
+      setClienteForm(initialClienteForm);
+      setIsClienteModalOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["clientes"] });
+      if (clienteCreado?.id) {
+        setOrdenForm((prev) => ({ ...prev, cliente_id: String(clienteCreado.id) }));
+      }
+    }
+  });
+
   const detalleQuery = useQuery({
     queryKey: ["orden-detalle", detailId],
     queryFn: () => api.ordenes.getById(detailId),
@@ -428,9 +481,24 @@ function OrdenesPage() {
       }
       return api.ordenes.create(payload);
     },
-    onSuccess: () => {
+    onSuccess: async (ordenGuardada) => {
+      const isCreate = !editingId;
+
+      if (isCreate && ordenGuardada?.id) {
+        try {
+          const detalleOrden = await queryClient.fetchQuery({
+            queryKey: ["orden-detalle", ordenGuardada.id],
+            queryFn: () => api.ordenes.getById(ordenGuardada.id)
+          });
+          renderAndPrintOrden(detalleOrden);
+        } catch (error) {
+          setFacturaError(error.message || "La orden se creo, pero no se pudo emitir la orden de trabajo.");
+        }
+      }
+
       setOrdenForm(initialOrden);
       setEditingId(null);
+      setEditingOrderNumber(null);
       setIsFormOpen(false);
       queryClient.invalidateQueries({ queryKey: ["ordenes"] });
       if (detailId) {
@@ -521,6 +589,7 @@ function OrdenesPage() {
 
   const openCreate = () => {
     setEditingId(null);
+    setEditingOrderNumber(null);
     setEditLoadError("");
     setOrdenForm(initialOrden);
     setIsDispositivoManual(false);
@@ -538,6 +607,7 @@ function OrdenesPage() {
       });
 
       setEditingId(orden.id);
+      setEditingOrderNumber(detalleOrden.nro_orden || null);
       setOrdenForm(mapOrdenToForm(detalleOrden));
       setIsDispositivoManual(false);
       setIsFormOpen(true);
@@ -546,6 +616,12 @@ function OrdenesPage() {
     } finally {
       setIsLoadingEdit(false);
     }
+  };
+
+  const openClienteModal = () => {
+    setClienteForm(initialClienteForm);
+    createClienteMutation.reset();
+    setIsClienteModalOpen(true);
   };
 
   const handlePrintOrden = async (ordenId, ordenSnapshot = null) => {
@@ -677,20 +753,22 @@ function OrdenesPage() {
                     <th>Estado</th>
                     <th>Prioridad</th>
                     <th>Creada</th>
-                    <th>Entrega estimada</th>
                     <th>Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {ordenesOrdenadas.map((orden) => (
-                    <tr key={orden.id} className={getOrdenRowClassName(orden.estado_actual)}>
-                      <td>#{orden.nro_orden}</td>
+                    <tr key={orden.id} className="orden-row">
+                      <td>{formatOrderNumber(orden.nro_orden)}</td>
                       <td>{orden.cliente_nombre}</td>
                       <td>{orden.equipo}</td>
-                      <td>{orden.estado_actual}</td>
-                      <td>{orden.prioridad}</td>
+                      <td>
+                        <span className={`orden-estado ${getEstadoClassName(orden.estado_actual)}`}>{orden.estado_actual}</span>
+                      </td>
+                      <td>
+                        <span className={`orden-prioridad ${getPrioridadClassName(orden.prioridad)}`}>{orden.prioridad}</span>
+                      </td>
                       <td>{dayjs(orden.fecha_creacion).format("DD/MM/YYYY HH:mm")}</td>
-                      <td>{orden.fecha_estimada_entrega ? dayjs(orden.fecha_estimada_entrega).format("DD/MM/YYYY HH:mm") : "-"}</td>
                       <td>
                         <div className="actions">
                           <button className="secondary" onClick={() => openDetail(orden)}>
@@ -716,9 +794,10 @@ function OrdenesPage() {
         onClose={() => {
           setIsFormOpen(false);
           setEditingId(null);
+          setEditingOrderNumber(null);
           setEditLoadError("");
         }}
-        title={editingId ? `Editar orden #${editingId}` : "Nueva orden"}
+        title={editingId ? `Editar orden ${formatOrderNumber(editingOrderNumber ?? editingId)}` : "Nueva orden"}
         width={1180}
       >
         <form
@@ -728,16 +807,14 @@ function OrdenesPage() {
             if (isEditMode) {
               saveOrdenMutation.mutate({
                 estado_actual: ordenForm.estado_actual,
-                prioridad: ordenForm.prioridad,
-                fecha_estimada_entrega: ordenForm.fecha_estimada_entrega || null
+                prioridad: ordenForm.prioridad
               });
               return;
             }
 
             saveOrdenMutation.mutate({
               ...ordenForm,
-              cliente_id: Number(ordenForm.cliente_id),
-              fecha_estimada_entrega: ordenForm.fecha_estimada_entrega || null
+              cliente_id: Number(ordenForm.cliente_id)
             });
           }}
         >
@@ -760,6 +837,13 @@ function OrdenesPage() {
                   ))}
                 </select>
               </label>
+              {!isEditMode ? (
+                <div className="actions" style={{ marginTop: 6 }}>
+                  <button type="button" className="secondary" onClick={openClienteModal}>
+                    Nuevo cliente
+                  </button>
+                </div>
+              ) : null}
               <label>
                 Telefono
                 <input value={selectedCliente?.telefono || ""} readOnly placeholder="Sin telefono" />
@@ -891,14 +975,6 @@ function OrdenesPage() {
                   </select>
                 </label>
               </div>
-              <label>
-                Fecha estimada entrega
-                <input
-                  type="datetime-local"
-                  value={ordenForm.fecha_estimada_entrega}
-                  onChange={(e) => setOrdenForm({ ...ordenForm, fecha_estimada_entrega: e.target.value })}
-                />
-              </label>
             </section>
           </div>
 
@@ -930,13 +1006,76 @@ function OrdenesPage() {
       </Modal>
 
       <Modal
+        open={isClienteModalOpen}
+        onClose={() => setIsClienteModalOpen(false)}
+        title="Nuevo cliente"
+        width={760}
+      >
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            createClienteMutation.mutate(clienteForm);
+          }}
+        >
+          <label>
+            Nombre
+            <input value={clienteForm.nombre} onChange={(e) => setClienteForm({ ...clienteForm, nombre: e.target.value })} required />
+          </label>
+          <label>
+            Telefono
+            <input value={clienteForm.telefono} onChange={(e) => setClienteForm({ ...clienteForm, telefono: e.target.value })} />
+          </label>
+          <label>
+            Email
+            <input value={clienteForm.email} onChange={(e) => setClienteForm({ ...clienteForm, email: e.target.value })} />
+          </label>
+          <label>
+            Documento
+            <input value={clienteForm.documento} onChange={(e) => setClienteForm({ ...clienteForm, documento: e.target.value })} />
+          </label>
+          <label>
+            Direccion
+            <input value={clienteForm.direccion} onChange={(e) => setClienteForm({ ...clienteForm, direccion: e.target.value })} />
+          </label>
+          <label>
+            Ciudad
+            <input value={clienteForm.ciudad} onChange={(e) => setClienteForm({ ...clienteForm, ciudad: e.target.value })} />
+          </label>
+          <label>
+            Provincia
+            <input value={clienteForm.provincia} onChange={(e) => setClienteForm({ ...clienteForm, provincia: e.target.value })} />
+          </label>
+          <label>
+            CUIT
+            <input value={clienteForm.cuit} onChange={(e) => setClienteForm({ ...clienteForm, cuit: e.target.value })} />
+          </label>
+          <label>
+            Condicion IVA
+            <select value={clienteForm.condicion_iva} onChange={(e) => setClienteForm({ ...clienteForm, condicion_iva: e.target.value })}>
+              <option value="consumidor_final">Consumidor final</option>
+              <option value="inscripto">Inscripto</option>
+              <option value="exento">Exento</option>
+            </select>
+          </label>
+          <label>
+            Observaciones
+            <textarea value={clienteForm.observaciones} onChange={(e) => setClienteForm({ ...clienteForm, observaciones: e.target.value })} />
+          </label>
+          <button type="submit" disabled={createClienteMutation.isPending}>
+            {createClienteMutation.isPending ? "Creando cliente..." : "Crear cliente"}
+          </button>
+          {createClienteMutation.error ? <span className="error">{createClienteMutation.error.message}</span> : null}
+        </form>
+      </Modal>
+
+      <Modal
         open={isFacturaOpen}
         onClose={() => {
           setIsFacturaOpen(false);
           setFacturaError("");
           setFacturaForm(initialFacturaForm);
         }}
-        title={facturaOrden ? `Facturar orden #${facturaOrden.nro_orden}` : "Generar factura"}
+        title={facturaOrden ? `Facturar orden ${formatOrderNumber(facturaOrden.nro_orden)}` : "Generar factura"}
         width={900}
       >
         {facturaOrden ? (
@@ -971,7 +1110,7 @@ function OrdenesPage() {
             <section className="card">
               <h3>Datos de la factura</h3>
               <p className="status">
-                Orden #{facturaOrden.nro_orden} - {facturaOrden.cliente_nombre} - {facturaOrden.equipo}
+                Orden {formatOrderNumber(facturaOrden.nro_orden)} - {facturaOrden.cliente_nombre} - {facturaOrden.equipo}
               </p>
               <div className="orden-inline-two">
                 <label>
@@ -1082,7 +1221,7 @@ function OrdenesPage() {
           setIsDetailOpen(false);
           setDetailId(null);
         }}
-        title={detalle ? `Orden #${detalle.nro_orden}` : "Detalle orden"}
+        title={detalle ? `Orden ${formatOrderNumber(detalle.nro_orden)}` : "Detalle orden"}
         width={1180}
       >
         {detalle ? (
@@ -1091,6 +1230,10 @@ function OrdenesPage() {
               <section className="card orden-detail-card">
                 <h3>Datos de la orden</h3>
                 <div className="orden-detail-data-grid">
+                  <article className="orden-detail-data-item">
+                    <span className="status">Nro de orden</span>
+                    <strong>{formatOrderNumber(detalle.nro_orden)}</strong>
+                  </article>
                   <article className="orden-detail-data-item">
                     <span className="status">Cliente</span>
                     <strong>{detalle.cliente_nombre || "-"}</strong>
@@ -1122,10 +1265,6 @@ function OrdenesPage() {
                   <article className="orden-detail-data-item">
                     <span className="status">Fecha creacion</span>
                     <strong>{dayjs(detalle.fecha_creacion).format("DD/MM/YYYY HH:mm")}</strong>
-                  </article>
-                  <article className="orden-detail-data-item">
-                    <span className="status">Entrega estimada</span>
-                    <strong>{detalle.fecha_estimada_entrega ? dayjs(detalle.fecha_estimada_entrega).format("DD/MM/YYYY HH:mm") : "-"}</strong>
                   </article>
                 </div>
                 <div className="orden-detail-actions">

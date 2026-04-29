@@ -12,6 +12,10 @@ const initialForm = {
   email: "",
   documento: "",
   direccion: "",
+  ciudad: "",
+  provincia: "",
+  cuit: "",
+  condicion_iva: "consumidor_final",
   observaciones: ""
 };
 
@@ -97,6 +101,10 @@ function ClientesPage() {
       email: cliente.email || "",
       documento: cliente.documento || "",
       direccion: cliente.direccion || "",
+      ciudad: cliente.ciudad || "",
+      provincia: cliente.provincia || "",
+      cuit: cliente.cuit || "",
+      condicion_iva: cliente.condicion_iva || "consumidor_final",
       observaciones: cliente.observaciones || ""
     });
     setIsFormOpen(true);
@@ -124,7 +132,7 @@ function ClientesPage() {
 
       <section className="card toolbar">
         <input
-          placeholder="Buscar por nombre, telefono o documento"
+          placeholder="Buscar por nombre, telefono, documento o cuit"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -213,6 +221,26 @@ function ClientesPage() {
             <input value={form.direccion} onChange={(e) => setForm({ ...form, direccion: e.target.value })} />
           </label>
           <label>
+            Ciudad
+            <input value={form.ciudad} onChange={(e) => setForm({ ...form, ciudad: e.target.value })} />
+          </label>
+          <label>
+            Provincia
+            <input value={form.provincia} onChange={(e) => setForm({ ...form, provincia: e.target.value })} />
+          </label>
+          <label>
+            CUIT
+            <input value={form.cuit} onChange={(e) => setForm({ ...form, cuit: e.target.value })} />
+          </label>
+          <label>
+            Condicion IVA
+            <select value={form.condicion_iva} onChange={(e) => setForm({ ...form, condicion_iva: e.target.value })}>
+              <option value="consumidor_final">Consumidor final</option>
+              <option value="inscripto">Inscripto</option>
+              <option value="exento">Exento</option>
+            </select>
+          </label>
+          <label>
             Observaciones
             <textarea value={form.observaciones} onChange={(e) => setForm({ ...form, observaciones: e.target.value })} />
           </label>
@@ -239,6 +267,10 @@ function ClientesPage() {
               <p><b>Email:</b> {selected.email || "-"}</p>
               <p><b>Documento:</b> {selected.documento || "-"}</p>
               <p><b>Direccion:</b> {selected.direccion || "-"}</p>
+              <p><b>Ciudad:</b> {selected.ciudad || "-"}</p>
+              <p><b>Provincia:</b> {selected.provincia || "-"}</p>
+              <p><b>CUIT:</b> {selected.cuit || "-"}</p>
+              <p><b>Condicion IVA:</b> {selected.condicion_iva ? selected.condicion_iva.replaceAll("_", " ") : "-"}</p>
             </section>
 
             <section className="card">

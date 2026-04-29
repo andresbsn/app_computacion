@@ -23,10 +23,28 @@ CREATE TABLE IF NOT EXISTS ${schema}.clientes (
   email VARCHAR(120),
   documento VARCHAR(40),
   direccion TEXT,
+  ciudad VARCHAR(120),
+  provincia VARCHAR(120),
+  cuit VARCHAR(20),
+  condicion_iva VARCHAR(20) NOT NULL DEFAULT 'consumidor_final',
   observaciones TEXT,
   activo BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE ${schema}.clientes
+  ADD COLUMN IF NOT EXISTS ciudad VARCHAR(120),
+  ADD COLUMN IF NOT EXISTS provincia VARCHAR(120),
+  ADD COLUMN IF NOT EXISTS cuit VARCHAR(20),
+  ADD COLUMN IF NOT EXISTS condicion_iva VARCHAR(20);
+
+UPDATE ${schema}.clientes
+SET condicion_iva = 'consumidor_final'
+WHERE condicion_iva IS NULL;
+
+ALTER TABLE ${schema}.clientes
+  ALTER COLUMN condicion_iva SET DEFAULT 'consumidor_final',
+  ALTER COLUMN condicion_iva SET NOT NULL;
 
 CREATE TABLE IF NOT EXISTS ${schema}.cuenta_corriente_movimientos (
   id BIGSERIAL PRIMARY KEY,
