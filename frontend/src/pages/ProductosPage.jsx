@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import Modal from "../components/Modal";
@@ -15,6 +15,7 @@ const initialForm = {
 function ProductosPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
   const [form, setForm] = useState(initialForm);
   const [editingId, setEditingId] = useState(null);
   const [detailProduct, setDetailProduct] = useState(null);
@@ -39,6 +40,24 @@ function ProductosPage() {
   });
 
   const productos = productosQuery.data || [];
+
+  const PAGE_SIZE = 8;
+  const totalPages = Math.max(1, Math.ceil(productos.length / PAGE_SIZE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const productosPaginados = useMemo(() => {
+    const start = (safeCurrentPage - 1) * PAGE_SIZE;
+    return productos.slice(start, start + PAGE_SIZE);
+  }, [productos, safeCurrentPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const openCreate = () => {
     setEditingId(null);
@@ -99,7 +118,7 @@ function ProductosPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {productos.map((producto) => (
+                  {productosPaginados.map((producto) => (
                     <tr key={producto.id}>
                       <td>{producto.id}</td>
                       <td>{producto.codigo || "-"}</td>
@@ -125,6 +144,24 @@ function ProductosPage() {
                 </tbody>
               </table>
             </div>
+            {productos.length > PAGE_SIZE ? (
+              <div className="actions" style={{ marginTop: 10 }}>
+                <button type="button" className="secondary" onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))} disabled={safeCurrentPage === 1}>
+                  Anterior
+                </button>
+                <span className="status" style={{ alignSelf: "center" }}>
+                  Pagina {safeCurrentPage} de {totalPages}
+                </span>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                  disabled={safeCurrentPage === totalPages}
+                >
+                  Siguiente
+                </button>
+              </div>
+            ) : null}
           </>
         )}
       </section>

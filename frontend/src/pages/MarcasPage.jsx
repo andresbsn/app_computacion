@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import Modal from "../components/Modal";
@@ -10,6 +10,7 @@ const initialForm = {
 function MarcasPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
   const [form, setForm] = useState(initialForm);
   const [editingId, setEditingId] = useState(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -39,6 +40,24 @@ function MarcasPage() {
   });
 
   const marcas = marcasQuery.data || [];
+
+  const PAGE_SIZE = 8;
+  const totalPages = Math.max(1, Math.ceil(marcas.length / PAGE_SIZE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const marcasPaginadas = useMemo(() => {
+    const start = (safeCurrentPage - 1) * PAGE_SIZE;
+    return marcas.slice(start, start + PAGE_SIZE);
+  }, [marcas, safeCurrentPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const openCreate = () => {
     setEditingId(null);
@@ -89,7 +108,7 @@ function MarcasPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {marcas.map((marca) => (
+                  {marcasPaginadas.map((marca) => (
                     <tr key={marca.id}>
                       <td>{marca.id}</td>
                       <td>{marca.nombre}</td>
@@ -116,6 +135,24 @@ function MarcasPage() {
                 </tbody>
               </table>
             </div>
+            {marcas.length > PAGE_SIZE ? (
+              <div className="actions" style={{ marginTop: 10 }}>
+                <button type="button" className="secondary" onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))} disabled={safeCurrentPage === 1}>
+                  Anterior
+                </button>
+                <span className="status" style={{ alignSelf: "center" }}>
+                  Pagina {safeCurrentPage} de {totalPages}
+                </span>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                  disabled={safeCurrentPage === totalPages}
+                >
+                  Siguiente
+                </button>
+              </div>
+            ) : null}
           </>
         )}
       </section>

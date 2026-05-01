@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import { api } from "../lib/api";
@@ -30,6 +30,7 @@ function ClientesPage() {
   const [pagoMonto, setPagoMonto] = useState("");
   const [pagoDesc, setPagoDesc] = useState("");
   const [pagoVentaId, setPagoVentaId] = useState("");
+  const [clientesPage, setClientesPage] = useState(1);
   const [movimientosPage, setMovimientosPage] = useState(1);
   const [comprasPage, setComprasPage] = useState(1);
 
@@ -71,6 +72,14 @@ function ClientesPage() {
   const movimientos = cuentaQuery.data?.movimientos || [];
   const compras = cuentaQuery.data?.ventas || [];
 
+  const PAGE_SIZE = 8;
+  const clientesTotalPages = Math.max(1, Math.ceil(clientes.length / PAGE_SIZE));
+  const clientesPageSafe = Math.min(clientesPage, clientesTotalPages);
+  const clientesPaginados = useMemo(() => {
+    const start = (clientesPageSafe - 1) * PAGE_SIZE;
+    return clientes.slice(start, start + PAGE_SIZE);
+  }, [clientes, clientesPageSafe]);
+
   const movimientosTotalPages = Math.max(1, Math.ceil(movimientos.length / DETAIL_PAGE_SIZE));
   const comprasTotalPages = Math.max(1, Math.ceil(compras.length / DETAIL_PAGE_SIZE));
 
@@ -86,6 +95,16 @@ function ClientesPage() {
     const start = (comprasPageSafe - 1) * DETAIL_PAGE_SIZE;
     return compras.slice(start, start + DETAIL_PAGE_SIZE);
   }, [compras, comprasPageSafe]);
+
+  useEffect(() => {
+    setClientesPage(1);
+  }, [search]);
+
+  useEffect(() => {
+    if (clientesPage > clientesTotalPages) {
+      setClientesPage(clientesTotalPages);
+    }
+  }, [clientesPage, clientesTotalPages]);
 
   const openCreate = () => {
     setEditingId(null);
@@ -163,7 +182,7 @@ function ClientesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {clientes.map((cliente) => (
+                  {clientesPaginados.map((cliente) => (
                     <tr key={cliente.id}>
                       <td>{cliente.id}</td>
                       <td>{cliente.nombre}</td>
@@ -182,6 +201,24 @@ function ClientesPage() {
                 </tbody>
               </table>
             </div>
+            {clientes.length > PAGE_SIZE ? (
+              <div className="actions" style={{ marginTop: 10 }}>
+                <button type="button" className="secondary" onClick={() => setClientesPage((prev) => Math.max(1, prev - 1))} disabled={clientesPageSafe === 1}>
+                  Anterior
+                </button>
+                <span className="status" style={{ alignSelf: "center" }}>
+                  Pagina {clientesPageSafe} de {clientesTotalPages}
+                </span>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setClientesPage((prev) => Math.min(clientesTotalPages, prev + 1))}
+                  disabled={clientesPageSafe === clientesTotalPages}
+                >
+                  Siguiente
+                </button>
+              </div>
+            ) : null}
           </>
         )}
       </section>

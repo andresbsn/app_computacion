@@ -3,6 +3,9 @@ import cors from "cors";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { config } from "./config.js";
 import { pool, withClient } from "./db.js";
 import { z } from "zod";
@@ -10,6 +13,16 @@ import { z } from "zod";
 const app = express();
 const schema = config.db.schema;
 const CLIENTE_CONDICIONES_IVA = ["consumidor_final", "inscripto", "exento"];
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const workshopLogoDataUri = (() => {
+  try {
+    const logoPath = path.resolve(__dirname, "../../frontend/assets/logo.jpeg");
+    const logoBuffer = fs.readFileSync(logoPath);
+    return `data:image/jpeg;base64,${logoBuffer.toString("base64")}`;
+  } catch {
+    return "";
+  }
+})();
 
 const clienteCreateSchema = z.object({
   nombre: z.string().trim().min(1),
@@ -229,7 +242,6 @@ const ventaCreateSchema = z
     impuestos: z.coerce.number().min(0).optional().default(0),
     forma_pago: z.enum(FORMA_PAGO),
     monto_pagado: z.coerce.number().min(0).optional().nullable(),
-    monto_final_reparacion: z.coerce.number().min(0).optional().nullable(),
     items: z.array(ventaItemSchema).min(1)
   })
   .superRefine((data, ctx) => {
@@ -317,6 +329,153 @@ const formatDateOnly = (value) => {
   return DATE_FORMATTER.format(new Date(value));
 };
 
+const escapePdfText = (value) =>
+  String(value ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/[^\x20-\x7E]/g, "?");
+
+const buildTechnicalReportPdfBuffer = ({ venta, comprobante, orden, cliente, total, detalleFacturado = [] }) => {
+  const detailLines = detalleFacturado.length ? detalleFacturado : ["-"];
+  const streamCommands = [];
+  const pageWidth = 595;
+  const margin = 40;
+  const right = pageWidth - margin;
+
+  const wrapText = (value, maxChars = 86) => {
+    const normalized = String(value || "-").replace(/\s+/g, " ").trim();
+    if (!normalized) {
+      return ["-"];
+    }
+
+    const words = normalized.split(" ");
+    const result = [];
+    let current = "";
+
+    for (const word of words) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (candidate.length <= maxChars) {
+        current = candidate;
+      } else {
+        if (current) {
+          result.push(current);
+        }
+        current = word;
+      }
+    }
+
+    if (current) {
+      result.push(current);
+    }
+
+    return result.length ? result : ["-"];
+  };
+
+  const pushText = (x, y, size, value, bold = false) => {
+    streamCommands.push("BT");
+    streamCommands.push(`/${bold ? "F2" : "F1"} ${size} Tf`);
+    streamCommands.push(`${x.toFixed(2)} ${y.toFixed(2)} Td`);
+    streamCommands.push(`(${escapePdfText(value)}) Tj`);
+    streamCommands.push("ET");
+  };
+
+  const pushHLine = (y) => {
+    streamCommands.push(`${margin} ${y.toFixed(2)} m ${right} ${y.toFixed(2)} l S`);
+  };
+
+  let y = 800;
+  pushText(margin, y, 18, "INFORME TECNICO", true);
+  pushText(420, y + 1, 11, `Nro ${comprobante.numero || venta.id}`, true);
+  y -= 20;
+  pushText(margin, y, 10, escapePdfText(config.workshop.companyName || "Taller"), true);
+  pushText(420, y, 10, `Fecha ${formatDateOnly(comprobante.fecha_emision || venta.fecha)}`);
+  y -= 14;
+  pushHLine(y);
+  y -= 18;
+
+  const rightColX = 310;
+  const writeRow = (leftLabel, leftValue, rightLabel, rightValue) => {
+    pushText(margin, y, 10, `${leftLabel}:`, true);
+    pushText(margin + 72, y, 10, leftValue || "-");
+    pushText(rightColX, y, 10, `${rightLabel}:`, true);
+    pushText(rightColX + 72, y, 10, rightValue || "-");
+    y -= 16;
+  };
+
+  writeRow("Orden", String(orden.nro_orden || "-"), "Estado", mapEstadoToLabel(orden.estado_actual));
+  writeRow("Cliente", String(cliente.nombre || "-"), "Documento", String(cliente.documento || "-"));
+  writeRow("Telefono", String(cliente.telefono || "-"), "Equipo", String(orden.equipo || "-"));
+  y -= 2;
+  pushHLine(y);
+  y -= 18;
+
+  streamCommands.push("0.92 g");
+  streamCommands.push(`${margin} ${(y - 13).toFixed(2)} ${right - margin} 18 re f`);
+  streamCommands.push("0 g");
+  pushText(margin + 6, y - 1, 10, "DETALLE DEL DIAGNOSTICO Y REPARACION", true);
+  y -= 24;
+
+  for (const rawDetail of detailLines) {
+    const wrapped = wrapText(rawDetail, 82);
+    wrapped.forEach((line, idx) => {
+      if (y < 120) {
+        return;
+      }
+      pushText(margin + 6, y, 10, `${idx === 0 ? "- " : "  "}${line}`);
+      y -= 14;
+    });
+    if (y < 120) {
+      break;
+    }
+  }
+
+  if (y < 120) {
+    pushText(margin + 6, 112, 10, "... (detalle truncado)");
+    y = 104;
+  }
+
+  y -= 8;
+  pushHLine(y);
+  y -= 26;
+
+  const totalBoxX = right - 205;
+  streamCommands.push(`${totalBoxX} ${(y - 8).toFixed(2)} 205 30 re S`);
+  pushText(totalBoxX + 10, y + 5, 11, "TOTAL", true);
+  pushText(totalBoxX + 100, y + 5, 13, formatCurrency(total), true);
+
+  const stream = `${streamCommands.join("\n")}\n`;
+  const streamLength = Buffer.byteLength(stream, "binary");
+
+  const objects = [
+    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>\nendobj\n",
+    "4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+    "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj\n",
+    `6 0 obj\n<< /Length ${streamLength} >>\nstream\n${stream}endstream\nendobj\n`
+  ];
+
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+
+  for (const obj of objects) {
+    offsets.push(Buffer.byteLength(pdf, "binary"));
+    pdf += obj;
+  }
+
+  const xrefOffset = Buffer.byteLength(pdf, "binary");
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += "0000000000 65535 f \n";
+  for (let i = 1; i <= objects.length; i += 1) {
+    pdf += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+  }
+
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return Buffer.from(pdf, "binary");
+};
+
 const mapEstadoToLabel = (estado) => {
   const labels = {
     ingresada: "Ingresada",
@@ -358,31 +517,40 @@ const buildTechnicalReportHtml = ({ venta, comprobante, orden, cliente, total, d
       <meta charset="UTF-8" />
       <title>Informe técnico N° ${escapeHtml(comprobante.numero)}</title>
       <style>
-        body { font-family: Arial, sans-serif; background: #efefef; margin: 0; padding: 16px; color: #111; }
-        .sheet { max-width: 920px; margin: 0 auto; border: 1px solid #444; background: #fff; }
+        body { font-family: Arial, sans-serif; background: #efefef; margin: 0; padding: 14px; color: #111; }
+        .sheet { max-width: 760px; margin: 0 auto; border: 1px solid #444; background: #fff; }
         .header { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #444; }
-        .cell { padding: 14px; border-right: 1px solid #444; }
+        .cell { padding: 10px; border-right: 1px solid #444; }
         .cell:last-child { border-right: none; }
-        .brand-title { font-size: 36px; margin: 0 0 8px; font-weight: 800; }
-        .muted { margin: 4px 0; font-size: 18px; }
-        .report-title { text-align: center; margin: 0; font-size: 48px; font-weight: 900; letter-spacing: 1px; }
-        .report-sub { text-align: center; font-size: 34px; margin: 12px 0 0; font-weight: 700; }
+        .brand-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+        .brand-logo { width: 88px; height: 88px; object-fit: cover; border: 1px solid #bbb; border-radius: 6px; }
+        .brand-title { font-size: 24px; margin: 0 0 6px; font-weight: 800; }
+        .muted { margin: 2px 0; font-size: 13px; }
+        .report-title { text-align: center; margin: 0; font-size: 30px; font-weight: 900; letter-spacing: .6px; }
+        .report-sub { text-align: center; font-size: 22px; margin: 8px 0 0; font-weight: 700; }
         .copy-label { display: inline-block; padding: 6px 10px; border: 1px solid #999; border-radius: 4px; font-size: 12px; margin-top: 8px; }
         table { width: 100%; border-collapse: collapse; }
-        td { border: 1px solid #bcbcbc; padding: 8px 10px; font-size: 24px; }
+        td { border: 1px solid #bcbcbc; padding: 6px 8px; font-size: 14px; }
         td.label { width: 20%; font-weight: 700; background: #f8f8f8; }
-        .bar { background: #0c0c0c; color: #fff; text-transform: uppercase; font-weight: 700; padding: 8px 10px; font-size: 22px; }
-        .detail-space { min-height: 220px; border-bottom: 1px solid #ccc; padding: 8px 10px; }
-        .detail-line { margin: 0 0 6px; font-size: 20px; line-height: 1.35; }
-        .totals td { font-size: 30px; }
-        .totals-final td { background: #0c0c0c; color: #fff; font-weight: 900; font-size: 40px; }
+        .bar { background: #0c0c0c; color: #fff; text-transform: uppercase; font-weight: 700; padding: 6px 8px; font-size: 14px; }
+        .detail-space { min-height: 140px; border-bottom: 1px solid #ccc; padding: 8px; }
+        .detail-line { margin: 0 0 4px; font-size: 13px; line-height: 1.35; }
+        .totals td { font-size: 18px; }
+        .totals-final td { background: #0c0c0c; color: #fff; font-weight: 900; font-size: 24px; }
+        @media print {
+          body { background: #fff; padding: 0; }
+          .sheet { max-width: 100%; border: 1px solid #444; }
+        }
       </style>
     </head>
     <body>
       <section class="sheet">
         <header class="header">
           <div class="cell">
-            <h1 class="brand-title">${escapeHtml(config.workshop.companyName)}</h1>
+            <div class="brand-head">
+              ${workshopLogoDataUri ? `<img class="brand-logo" src="${workshopLogoDataUri}" alt="Logo ${escapeHtml(config.workshop.companyName)}" />` : ""}
+              <h1 class="brand-title">${escapeHtml(config.workshop.companyName)}</h1>
+            </div>
             <p class="muted">${escapeHtml(config.workshop.ownerName)}</p>
             <p class="muted">${escapeHtml(config.workshop.address)}</p>
             <p class="muted">Tel: ${escapeHtml(config.workshop.phone)}</p>
@@ -539,7 +707,13 @@ const sendTechnicalReportEmail = async (report) => {
     return { sent: false, reason: "smtp_no_configurado" };
   }
 
-  const html = buildTechnicalReportHtml({
+  const html = `
+    <p>Hola ${escapeHtml(report.cliente.nombre || "cliente")},</p>
+    <p>Tu orden <b>N° ${escapeHtml(report.orden.nro_orden || "-")}</b> ya esta lista para retirar.</p>
+    <p>Adjuntamos el comprobante en PDF.</p>
+    <p>Total: <b>${escapeHtml(formatCurrency(report.venta.total))}</b></p>
+  `;
+  const pdfBuffer = buildTechnicalReportPdfBuffer({
     venta: report.venta,
     comprobante: report.comprobante,
     orden: report.orden,
@@ -556,9 +730,9 @@ const sendTechnicalReportEmail = async (report) => {
     html,
     attachments: [
       {
-        filename: `informe-tecnico-orden-${report.orden.nro_orden}.html`,
-        content: html,
-        contentType: "text/html; charset=utf-8"
+        filename: `informe-tecnico-orden-${report.orden.nro_orden}.pdf`,
+        content: pdfBuffer,
+        contentType: "application/pdf"
       }
     ]
   });
@@ -1095,6 +1269,34 @@ app.get("/ventas/:id", async (req, res) => {
   }
 });
 
+app.get("/ventas/:id/reporte-tecnico-html", async (req, res) => {
+  const id = parseId(req.params.id, res);
+  if (!id) {
+    return;
+  }
+
+  try {
+    const technicalReport = await getTechnicalReportContext(id);
+    if (!technicalReport) {
+      return res.status(404).json({ error: "Venta no encontrada o no corresponde a una orden de reparacion" });
+    }
+
+    const html = buildTechnicalReportHtml({
+      venta: technicalReport.venta,
+      comprobante: technicalReport.comprobante,
+      orden: technicalReport.orden,
+      cliente: technicalReport.cliente,
+      total: technicalReport.venta.total,
+      detalleFacturado: technicalReport.detalle_facturado
+    });
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(html);
+  } catch (error) {
+    res.status(500).json({ error: "Error al generar informe tecnico", message: error.message });
+  }
+});
+
 app.post("/ventas", async (req, res) => {
   try {
     const body = ventaCreateSchema.parse(req.body);
@@ -1137,15 +1339,7 @@ app.post("/ventas", async (req, res) => {
           }
         }
 
-        let totalFinal = subtotalCalculado - body.descuento + body.impuestos;
-        if (body.origen === "orden" && esPrimeraFacturaOrden) {
-          const montoFinalReparacion = Number(body.monto_final_reparacion);
-          if (!Number.isFinite(montoFinalReparacion) || montoFinalReparacion <= 0) {
-            await client.query("ROLLBACK");
-            return { error: { code: 400, message: "Debe ingresar monto_final_reparacion para la primera factura de una orden" } };
-          }
-          totalFinal = montoFinalReparacion;
-        }
+        const totalFinal = subtotalCalculado - body.descuento + body.impuestos;
 
         if (totalFinal < 0) {
           await client.query("ROLLBACK");

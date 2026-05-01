@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import Modal from "../components/Modal";
@@ -48,6 +48,10 @@ function ConfiguracionPage() {
   const [marcaSearch, setMarcaSearch] = useState("");
   const [dispositivoSearch, setDispositivoSearch] = useState("");
   const [gastoSearch, setGastoSearch] = useState("");
+  const [usuariosPage, setUsuariosPage] = useState(1);
+  const [marcasPage, setMarcasPage] = useState(1);
+  const [dispositivosPage, setDispositivosPage] = useState(1);
+  const [gastosPage, setGastosPage] = useState(1);
 
   const [usuarioForm, setUsuarioForm] = useState(initialUsuario);
   const [marcaForm, setMarcaForm] = useState(initialMarca);
@@ -74,7 +78,79 @@ function ConfiguracionPage() {
   const dispositivos = dispositivosQuery.data || [];
   const gastos = gastosQuery.data || [];
 
+  const PAGE_SIZE = 8;
+
+  const usuariosTotalPages = Math.max(1, Math.ceil(usuarios.length / PAGE_SIZE));
+  const marcasTotalPages = Math.max(1, Math.ceil(marcas.length / PAGE_SIZE));
+  const dispositivosTotalPages = Math.max(1, Math.ceil(dispositivos.length / PAGE_SIZE));
+  const gastosTotalPages = Math.max(1, Math.ceil(gastos.length / PAGE_SIZE));
+
+  const usuariosPageSafe = Math.min(usuariosPage, usuariosTotalPages);
+  const marcasPageSafe = Math.min(marcasPage, marcasTotalPages);
+  const dispositivosPageSafe = Math.min(dispositivosPage, dispositivosTotalPages);
+  const gastosPageSafe = Math.min(gastosPage, gastosTotalPages);
+
+  const usuariosPaginados = useMemo(() => {
+    const start = (usuariosPageSafe - 1) * PAGE_SIZE;
+    return usuarios.slice(start, start + PAGE_SIZE);
+  }, [usuarios, usuariosPageSafe]);
+
+  const marcasPaginadas = useMemo(() => {
+    const start = (marcasPageSafe - 1) * PAGE_SIZE;
+    return marcas.slice(start, start + PAGE_SIZE);
+  }, [marcas, marcasPageSafe]);
+
+  const dispositivosPaginados = useMemo(() => {
+    const start = (dispositivosPageSafe - 1) * PAGE_SIZE;
+    return dispositivos.slice(start, start + PAGE_SIZE);
+  }, [dispositivos, dispositivosPageSafe]);
+
+  const gastosPaginados = useMemo(() => {
+    const start = (gastosPageSafe - 1) * PAGE_SIZE;
+    return gastos.slice(start, start + PAGE_SIZE);
+  }, [gastos, gastosPageSafe]);
+
   const currentTabLabel = useMemo(() => tabs.find((t) => t.key === activeTab)?.label || "", [activeTab]);
+
+  useEffect(() => {
+    setUsuariosPage(1);
+  }, [usuarioSearch]);
+
+  useEffect(() => {
+    setMarcasPage(1);
+  }, [marcaSearch]);
+
+  useEffect(() => {
+    setDispositivosPage(1);
+  }, [dispositivoSearch]);
+
+  useEffect(() => {
+    setGastosPage(1);
+  }, [gastoSearch]);
+
+  useEffect(() => {
+    if (usuariosPage > usuariosTotalPages) {
+      setUsuariosPage(usuariosTotalPages);
+    }
+  }, [usuariosPage, usuariosTotalPages]);
+
+  useEffect(() => {
+    if (marcasPage > marcasTotalPages) {
+      setMarcasPage(marcasTotalPages);
+    }
+  }, [marcasPage, marcasTotalPages]);
+
+  useEffect(() => {
+    if (dispositivosPage > dispositivosTotalPages) {
+      setDispositivosPage(dispositivosTotalPages);
+    }
+  }, [dispositivosPage, dispositivosTotalPages]);
+
+  useEffect(() => {
+    if (gastosPage > gastosTotalPages) {
+      setGastosPage(gastosTotalPages);
+    }
+  }, [gastosPage, gastosTotalPages]);
 
   const saveUsuarioMutation = useMutation({
     mutationFn: (payload) => {
@@ -252,46 +328,66 @@ function ConfiguracionPage() {
             {usuariosQuery.isLoading ? (
               <div className="empty-state">Cargando usuarios...</div>
             ) : (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Nombre</th>
-                      <th>Email</th>
-                      <th>Rol</th>
-                      <th>Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {usuarios.map((usuario) => (
-                      <tr key={usuario.id}>
-                        <td>{usuario.id}</td>
-                        <td>{usuario.nombre}</td>
-                        <td>{usuario.email}</td>
-                        <td>{usuario.rol}</td>
-                        <td>
-                          <div className="actions">
-                            <button className="secondary" onClick={() => openEditUsuario(usuario)}>
-                              Editar
-                            </button>
-                            <button
-                              className="danger"
-                              onClick={() => {
-                                if (window.confirm(`Desactivar usuario '${usuario.nombre}'?`)) {
-                                  deleteUsuarioMutation.mutate(usuario.id);
-                                }
-                              }}
-                            >
-                              Eliminar
-                            </button>
-                          </div>
-                        </td>
+              <>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Nombre</th>
+                        <th>Email</th>
+                        <th>Rol</th>
+                        <th>Acciones</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {usuariosPaginados.map((usuario) => (
+                        <tr key={usuario.id}>
+                          <td>{usuario.id}</td>
+                          <td>{usuario.nombre}</td>
+                          <td>{usuario.email}</td>
+                          <td>{usuario.rol}</td>
+                          <td>
+                            <div className="actions">
+                              <button className="secondary" onClick={() => openEditUsuario(usuario)}>
+                                Editar
+                              </button>
+                              <button
+                                className="danger"
+                                onClick={() => {
+                                  if (window.confirm(`Desactivar usuario '${usuario.nombre}'?`)) {
+                                    deleteUsuarioMutation.mutate(usuario.id);
+                                  }
+                                }}
+                              >
+                                Eliminar
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {usuarios.length > PAGE_SIZE ? (
+                  <div className="actions" style={{ marginTop: 10 }}>
+                    <button type="button" className="secondary" onClick={() => setUsuariosPage((prev) => Math.max(1, prev - 1))} disabled={usuariosPageSafe === 1}>
+                      Anterior
+                    </button>
+                    <span className="status" style={{ alignSelf: "center" }}>
+                      Pagina {usuariosPageSafe} de {usuariosTotalPages}
+                    </span>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => setUsuariosPage((prev) => Math.min(usuariosTotalPages, prev + 1))}
+                      disabled={usuariosPageSafe === usuariosTotalPages}
+                    >
+                      Siguiente
+                    </button>
+                  </div>
+                ) : null}
+              </>
             )}
           </section>
         </>
@@ -312,42 +408,62 @@ function ConfiguracionPage() {
             {marcasQuery.isLoading ? (
               <div className="empty-state">Cargando marcas...</div>
             ) : (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Nombre</th>
-                      <th>Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {marcas.map((marca) => (
-                      <tr key={marca.id}>
-                        <td>{marca.id}</td>
-                        <td>{marca.nombre}</td>
-                        <td>
-                          <div className="actions">
-                            <button className="secondary" onClick={() => openEditMarca(marca)}>
-                              Editar
-                            </button>
-                            <button
-                              className="danger"
-                              onClick={() => {
-                                if (window.confirm(`Desactivar marca '${marca.nombre}'?`)) {
-                                  deleteMarcaMutation.mutate(marca.id);
-                                }
-                              }}
-                            >
-                              Eliminar
-                            </button>
-                          </div>
-                        </td>
+              <>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Nombre</th>
+                        <th>Acciones</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {marcasPaginadas.map((marca) => (
+                        <tr key={marca.id}>
+                          <td>{marca.id}</td>
+                          <td>{marca.nombre}</td>
+                          <td>
+                            <div className="actions">
+                              <button className="secondary" onClick={() => openEditMarca(marca)}>
+                                Editar
+                              </button>
+                              <button
+                                className="danger"
+                                onClick={() => {
+                                  if (window.confirm(`Desactivar marca '${marca.nombre}'?`)) {
+                                    deleteMarcaMutation.mutate(marca.id);
+                                  }
+                                }}
+                              >
+                                Eliminar
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {marcas.length > PAGE_SIZE ? (
+                  <div className="actions" style={{ marginTop: 10 }}>
+                    <button type="button" className="secondary" onClick={() => setMarcasPage((prev) => Math.max(1, prev - 1))} disabled={marcasPageSafe === 1}>
+                      Anterior
+                    </button>
+                    <span className="status" style={{ alignSelf: "center" }}>
+                      Pagina {marcasPageSafe} de {marcasTotalPages}
+                    </span>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => setMarcasPage((prev) => Math.min(marcasTotalPages, prev + 1))}
+                      disabled={marcasPageSafe === marcasTotalPages}
+                    >
+                      Siguiente
+                    </button>
+                  </div>
+                ) : null}
+              </>
             )}
           </section>
         </>
@@ -368,48 +484,68 @@ function ConfiguracionPage() {
             {gastosQuery.isLoading ? (
               <div className="empty-state">Cargando gastos...</div>
             ) : (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Concepto</th>
-                      <th>Categoria</th>
-                      <th>Monto</th>
-                      <th>Fecha</th>
-                      <th>Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {gastos.map((gasto) => (
-                      <tr key={gasto.id}>
-                        <td>{gasto.id}</td>
-                        <td>{gasto.concepto}</td>
-                        <td>{gasto.categoria || "-"}</td>
-                        <td>${Number(gasto.monto).toFixed(2)}</td>
-                        <td>{formatDate(gasto.fecha)}</td>
-                        <td>
-                          <div className="actions">
-                            <button className="secondary" onClick={() => openEditGasto(gasto)}>
-                              Editar
-                            </button>
-                            <button
-                              className="danger"
-                              onClick={() => {
-                                if (window.confirm(`Desactivar gasto '${gasto.concepto}'?`)) {
-                                  deleteGastoMutation.mutate(gasto.id);
-                                }
-                              }}
-                            >
-                              Eliminar
-                            </button>
-                          </div>
-                        </td>
+              <>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Concepto</th>
+                        <th>Categoria</th>
+                        <th>Monto</th>
+                        <th>Fecha</th>
+                        <th>Acciones</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {gastosPaginados.map((gasto) => (
+                        <tr key={gasto.id}>
+                          <td>{gasto.id}</td>
+                          <td>{gasto.concepto}</td>
+                          <td>{gasto.categoria || "-"}</td>
+                          <td>${Number(gasto.monto).toFixed(2)}</td>
+                          <td>{formatDate(gasto.fecha)}</td>
+                          <td>
+                            <div className="actions">
+                              <button className="secondary" onClick={() => openEditGasto(gasto)}>
+                                Editar
+                              </button>
+                              <button
+                                className="danger"
+                                onClick={() => {
+                                  if (window.confirm(`Desactivar gasto '${gasto.concepto}'?`)) {
+                                    deleteGastoMutation.mutate(gasto.id);
+                                  }
+                                }}
+                              >
+                                Eliminar
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {gastos.length > PAGE_SIZE ? (
+                  <div className="actions" style={{ marginTop: 10 }}>
+                    <button type="button" className="secondary" onClick={() => setGastosPage((prev) => Math.max(1, prev - 1))} disabled={gastosPageSafe === 1}>
+                      Anterior
+                    </button>
+                    <span className="status" style={{ alignSelf: "center" }}>
+                      Pagina {gastosPageSafe} de {gastosTotalPages}
+                    </span>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => setGastosPage((prev) => Math.min(gastosTotalPages, prev + 1))}
+                      disabled={gastosPageSafe === gastosTotalPages}
+                    >
+                      Siguiente
+                    </button>
+                  </div>
+                ) : null}
+              </>
             )}
           </section>
         </>
@@ -434,42 +570,67 @@ function ConfiguracionPage() {
             {dispositivosQuery.isLoading ? (
               <div className="empty-state">Cargando dispositivos...</div>
             ) : (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Nombre</th>
-                      <th>Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dispositivos.map((dispositivo) => (
-                      <tr key={dispositivo.id}>
-                        <td>{dispositivo.id}</td>
-                        <td>{dispositivo.nombre}</td>
-                        <td>
-                          <div className="actions">
-                            <button className="secondary" onClick={() => openEditDispositivo(dispositivo)}>
-                              Editar
-                            </button>
-                            <button
-                              className="danger"
-                              onClick={() => {
-                                if (window.confirm(`Desactivar dispositivo '${dispositivo.nombre}'?`)) {
-                                  deleteDispositivoMutation.mutate(dispositivo.id);
-                                }
-                              }}
-                            >
-                              Eliminar
-                            </button>
-                          </div>
-                        </td>
+              <>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Nombre</th>
+                        <th>Acciones</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {dispositivosPaginados.map((dispositivo) => (
+                        <tr key={dispositivo.id}>
+                          <td>{dispositivo.id}</td>
+                          <td>{dispositivo.nombre}</td>
+                          <td>
+                            <div className="actions">
+                              <button className="secondary" onClick={() => openEditDispositivo(dispositivo)}>
+                                Editar
+                              </button>
+                              <button
+                                className="danger"
+                                onClick={() => {
+                                  if (window.confirm(`Desactivar dispositivo '${dispositivo.nombre}'?`)) {
+                                    deleteDispositivoMutation.mutate(dispositivo.id);
+                                  }
+                                }}
+                              >
+                                Eliminar
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {dispositivos.length > PAGE_SIZE ? (
+                  <div className="actions" style={{ marginTop: 10 }}>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => setDispositivosPage((prev) => Math.max(1, prev - 1))}
+                      disabled={dispositivosPageSafe === 1}
+                    >
+                      Anterior
+                    </button>
+                    <span className="status" style={{ alignSelf: "center" }}>
+                      Pagina {dispositivosPageSafe} de {dispositivosTotalPages}
+                    </span>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => setDispositivosPage((prev) => Math.min(dispositivosTotalPages, prev + 1))}
+                      disabled={dispositivosPageSafe === dispositivosTotalPages}
+                    >
+                      Siguiente
+                    </button>
+                  </div>
+                ) : null}
+              </>
             )}
           </section>
         </>

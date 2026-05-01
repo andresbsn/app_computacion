@@ -45,6 +45,29 @@ async function request(path, options = {}) {
   return data;
 }
 
+async function requestText(path, options = {}) {
+  const token = getAuthToken();
+  const response = await fetch(`${API_URL}${path}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers || {})
+    },
+    ...options
+  });
+
+  const data = await response.text();
+  if (!response.ok) {
+    try {
+      const parsed = JSON.parse(data);
+      throw new Error(parsed.error || "Error de API");
+    } catch {
+      throw new Error("Error de API");
+    }
+  }
+
+  return data;
+}
+
 export const api = {
   auth: {
     login: (payload) => request("/auth/login", { method: "POST", body: JSON.stringify(payload) }),
@@ -109,6 +132,7 @@ export const api = {
   ventas: {
     list: (params = {}) => request(`/ventas${buildQuery(params)}`),
     getById: (id) => request(`/ventas/${id}`),
+    getTechnicalReportHtml: (id) => requestText(`/ventas/${id}/reporte-tecnico-html`),
     create: (payload) => request("/ventas", { method: "POST", body: JSON.stringify(payload) })
   }
 };

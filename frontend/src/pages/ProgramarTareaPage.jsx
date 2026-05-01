@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import { api } from "../lib/api";
@@ -40,6 +40,7 @@ function ProgramarTareaPage() {
   const [search, setSearch] = useState("");
   const [prioridad, setPrioridad] = useState("");
   const [estado, setEstado] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
   const [form, setForm] = useState(initialForm);
   const [editingId, setEditingId] = useState(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -76,6 +77,14 @@ function ProgramarTareaPage() {
 
   const tareas = tareasQuery.data || [];
 
+  const PAGE_SIZE = 8;
+  const totalPages = Math.max(1, Math.ceil(tareas.length / PAGE_SIZE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const tareasPaginadas = useMemo(() => {
+    const start = (safeCurrentPage - 1) * PAGE_SIZE;
+    return tareas.slice(start, start + PAGE_SIZE);
+  }, [tareas, safeCurrentPage]);
+
   const stats = useMemo(() => {
     const now = dayjs();
     return tareas.reduce(
@@ -96,6 +105,16 @@ function ProgramarTareaPage() {
       { pendientes: 0, vencidas: 0, completadas: 0 }
     );
   }, [tareas]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, prioridad, estado]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const openCreate = () => {
     setEditingId(null);
@@ -186,7 +205,7 @@ function ProgramarTareaPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {tareas.map((tarea) => {
+                  {tareasPaginadas.map((tarea) => {
                     const vencida = dayjs(tarea.fecha_vencimiento).isBefore(dayjs());
                     const estadoTarea = tarea.completada ? "Completada" : vencida ? "Vencida" : "Pendiente";
 
@@ -227,6 +246,24 @@ function ProgramarTareaPage() {
                 </tbody>
               </table>
             </div>
+            {tareas.length > PAGE_SIZE ? (
+              <div className="actions" style={{ marginTop: 10 }}>
+                <button type="button" className="secondary" onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))} disabled={safeCurrentPage === 1}>
+                  Anterior
+                </button>
+                <span className="status" style={{ alignSelf: "center" }}>
+                  Pagina {safeCurrentPage} de {totalPages}
+                </span>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                  disabled={safeCurrentPage === totalPages}
+                >
+                  Siguiente
+                </button>
+              </div>
+            ) : null}
           </>
         )}
       </section>

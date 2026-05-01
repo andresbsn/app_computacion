@@ -1,9 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import { api } from "../lib/api";
 import Modal from "../components/Modal";
-import logoCge from "../../assets/logo.jpeg";
+import logoCge from "../../assets/logo.jpeg?inline";
 
 const AFIP_ISSUER_NAME = import.meta.env.VITE_AFIP_ISSUER_NAME || "Federico Zabala";
 const AFIP_ISSUER_ADDRESS = import.meta.env.VITE_AFIP_ISSUER_ADDRESS || "Rivadavia 357";
@@ -48,8 +48,9 @@ const initialFacturaForm = {
   tipo: "local",
   forma_pago: "efectivo",
   modo_detalle: "manual",
-  detalle_manual: "",
-  monto_final_reparacion: ""
+  manual_item_descripcion: "",
+  manual_item_precio_unitario: "",
+  manual_items: []
 };
 
 const mapEmailReasonToMessage = (reason) => {
@@ -83,6 +84,48 @@ const escapeHtml = (value) =>
     .replace(/'/g, "&#039;");
 
 const formatOrderNumber = (value) => `#${String(value ?? "-").padStart(7, "0")}`;
+
+const printWhenReady = (printWindow) => {
+  const tryPrint = () => {
+    let didPrint = false;
+    const safePrint = () => {
+      if (didPrint) {
+        return;
+      }
+      didPrint = true;
+      printWindow.focus();
+      printWindow.print();
+    };
+
+    const images = Array.from(printWindow.document.images || []);
+    if (images.length === 0) {
+      setTimeout(safePrint, 50);
+      return;
+    }
+
+    let pending = images.length;
+    const markDone = () => {
+      pending -= 1;
+      if (pending <= 0) {
+        setTimeout(safePrint, 50);
+      }
+    };
+
+    images.forEach((img) => {
+      if (img.complete && img.naturalWidth > 0) {
+        markDone();
+        return;
+      }
+      img.addEventListener("load", markDone, { once: true });
+      img.addEventListener("error", markDone, { once: true });
+    });
+
+    setTimeout(safePrint, 1500);
+  };
+
+  printWindow.addEventListener("load", tryPrint, { once: true });
+  setTimeout(tryPrint, 200);
+};
 
 const renderAndPrintOrden = (orden) => {
   const printWindow = window.open("", "_blank", "width=900,height=780");
@@ -208,42 +251,53 @@ const renderAndPrintOrden = (orden) => {
         <title>Orden ${escapeHtml(orderNumber)}</title>
         <style>
           * { box-sizing: border-box; }
-          body { font-family: Arial, sans-serif; margin: 0; padding: 14px; color: #0b1a33; background: #f3f4f6; }
-          .copy { width: 100%; max-width: 920px; margin: 0 auto; background: #f9fafb; border-radius: 10px; padding: 10px 10px 8px; border: 1px solid #d7dce4; }
-          .copy + .copy { margin-top: 16px; }
-          .header { display: flex; justify-content: space-between; gap: 12px; border-bottom: 4px solid #1f2937; padding-bottom: 8px; }
+          body { font-family: Arial, sans-serif; margin: 0; padding: 10px; color: #0b1a33; background: #f3f4f6; }
+          .copy { width: 100%; max-width: 794px; margin: 0 auto; background: #f9fafb; border-radius: 8px; padding: 8px 9px 7px; border: 1px solid #d7dce4; }
+          .copy + .copy { margin-top: 12px; }
+          .header { display: flex; justify-content: space-between; gap: 8px; border-bottom: 3px solid #1f2937; padding-bottom: 6px; }
           .brand { display: flex; gap: 10px; align-items: flex-start; }
-          .brand img { width: 120px; height: 80px; object-fit: contain; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; }
-          .brand h1 { margin: 0 0 4px; font-size: 36px; font-weight: 800; letter-spacing: 0.4px; line-height: 1; }
-          .muted { margin: 1px 0; font-size: 19px; color: #0f172a; line-height: 1.2; }
-          .badge { min-width: 178px; border-radius: 10px; padding: 10px 14px; background: linear-gradient(120deg, #4f46e5 0%, #06b6d4 100%); color: #fff; text-align: center; box-shadow: 0 10px 18px rgba(79, 70, 229, 0.22); }
-          .badge-label { display: block; font-size: 16px; font-weight: 700; letter-spacing: 1px; margin-bottom: 4px; }
-          .badge strong { font-size: 44px; letter-spacing: 1px; line-height: 1; }
-          .title-box { margin-top: 8px; border: 1px solid #1f2937; border-radius: 8px; padding: 6px 8px 4px; text-align: center; }
-          .title-box h2 { margin: 0; font-size: 42px; letter-spacing: 0.5px; text-transform: uppercase; line-height: 1.1; }
-          .title-box p { margin: 4px 0 0; font-size: 30px; color: #64748b; }
-          .data-box { margin-top: 8px; border: 1px solid #d5dae3; border-radius: 8px; padding: 8px 10px; background: #f8fafc; }
-          .data-box h3 { margin: 0; font-size: 34px; text-transform: uppercase; line-height: 1.1; border-bottom: 1px solid #c5ced8; padding-bottom: 4px; }
-          .rows { padding-top: 4px; }
-          .rows p { margin: 4px 0; font-size: 29px; line-height: 1.15; }
-          .rows b { display: inline-block; min-width: 180px; }
-          .security-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding-top: 6px; }
-          .security-item { border: 2px dashed #94a3b8; border-radius: 8px; text-align: center; padding: 6px 8px; background: #f8fafc; }
-          .security-item span { display: block; font-size: 20px; font-weight: 700; color: #475569; }
-          .security-item strong { display: block; margin-top: 3px; font-size: 28px; color: #0f172a; }
+          .brand img { width: 130px; height: 82px; object-fit: contain; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; }
+          .brand h1 { margin: 0 0 2px; font-size: 24px; font-weight: 800; letter-spacing: 0.3px; line-height: 1.05; }
+          .muted { margin: 1px 0; font-size: 12px; color: #0f172a; line-height: 1.2; }
+          .badge { min-width: 128px; border-radius: 8px; padding: 7px 10px; background: linear-gradient(120deg, #4f46e5 0%, #06b6d4 100%); color: #fff; text-align: center; box-shadow: 0 6px 12px rgba(79, 70, 229, 0.22); }
+          .badge-label { display: block; font-size: 11px; font-weight: 700; letter-spacing: 0.8px; margin-bottom: 2px; }
+          .badge strong { font-size: 26px; letter-spacing: 0.8px; line-height: 1; }
+          .title-box { margin-top: 6px; border: 1px solid #1f2937; border-radius: 6px; padding: 5px 7px 3px; text-align: center; }
+          .title-box h2 { margin: 0; font-size: 20px; letter-spacing: 0.4px; text-transform: uppercase; line-height: 1.1; }
+          .title-box p { margin: 3px 0 0; font-size: 14px; color: #64748b; }
+          .data-box { margin-top: 6px; border: 1px solid #d5dae3; border-radius: 6px; padding: 6px 8px; background: #f8fafc; }
+          .data-box h3 { margin: 0; font-size: 15px; text-transform: uppercase; line-height: 1.2; border-bottom: 1px solid #c5ced8; padding-bottom: 3px; }
+          .rows { padding-top: 3px; }
+          .rows p { margin: 3px 0; font-size: 12px; line-height: 1.25; }
+          .rows b { display: inline-block; min-width: 106px; }
+          .security-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding-top: 4px; }
+          .security-item { border: 1px dashed #94a3b8; border-radius: 6px; text-align: center; padding: 5px 6px; background: #f8fafc; }
+          .security-item span { display: block; font-size: 11px; font-weight: 700; color: #475569; }
+          .security-item strong { display: block; margin-top: 2px; font-size: 13px; color: #0f172a; }
           .security-item--clave { border-color: #818cf8; }
           .security-item--patron { border-color: #34d399; }
-          .ingreso-box { margin-top: 8px; border-top: 1px dashed #9ca3af; padding-top: 4px; }
-          .ingreso-box h3 { margin: 0 0 4px; font-size: 28px; text-transform: uppercase; }
-          .firma-group { margin-bottom: 8px; }
-          .firma-group p { margin: 0 0 3px; font-size: 19px; }
-          .linea { border-bottom: 3px solid #1e293b; height: 22px; width: 52%; }
-          .terms-box { margin-top: 8px; border: 1px solid #f59e0b; background: #fff7e6; border-radius: 8px; padding: 8px; font-size: 15px; line-height: 1.35; color: #92400e; }
-          .footer-note { margin: 10px 0 0; text-align: center; font-size: 15px; color: #94a3b8; border-top: 1px solid #d1d5db; padding-top: 6px; }
+          .ingreso-box { margin-top: 6px; border-top: 1px dashed #9ca3af; padding-top: 4px; }
+          .ingreso-box h3 { margin: 0 0 4px; font-size: 14px; text-transform: uppercase; }
+          .firma-group { margin-bottom: 7px; }
+          .firma-group p { margin: 0 0 2px; font-size: 11px; }
+          .linea { border-bottom: 2px solid #1e293b; height: 18px; width: 52%; }
+          .terms-box { margin-top: 6px; border: 1px solid #f59e0b; background: #fff7e6; border-radius: 6px; padding: 6px; font-size: 10.5px; line-height: 1.3; color: #92400e; }
+          .footer-note { margin: 8px 0 0; text-align: center; font-size: 10px; color: #94a3b8; border-top: 1px solid #d1d5db; padding-top: 5px; }
           @media print {
+            @page { size: A4 portrait; margin: 8mm; }
             body { background: #fff; padding: 0; margin: 0; }
-            .copy { border: none; box-shadow: none; border-radius: 0; padding: 8mm; max-width: 100%; }
-            .copy-break { page-break-after: always; }
+            .copy {
+              border: none;
+              box-shadow: none;
+              border-radius: 0;
+              width: 100%;
+              max-width: none;
+              min-height: calc(297mm - 16mm);
+              margin: 0;
+              padding: 0;
+              break-inside: avoid;
+            }
+            .copy-break { page-break-after: always; break-after: page; }
           }
         </style>
       </head>
@@ -256,8 +310,7 @@ const renderAndPrintOrden = (orden) => {
   printWindow.document.open();
   printWindow.document.write(html);
   printWindow.document.close();
-  printWindow.focus();
-  printWindow.print();
+  printWhenReady(printWindow);
 };
 
 const renderAndPrintFactura = ({ venta, orden, items }) => {
@@ -374,8 +427,8 @@ const renderAndPrintFactura = ({ venta, orden, items }) => {
           .header { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #222; }
           .header-left, .header-right { padding: 12px; min-height: 132px; }
           .header-left { border-right: 1px solid #222; }
-          .brand { display: flex; gap: 10px; align-items: flex-start; }
-          .brand img { width: 62px; height: 46px; object-fit: contain; }
+          .brand { display: flex; gap: 14px; align-items: flex-start; }
+          .brand img { width: 130px; height: 92px; object-fit: contain; }
           .company-name { margin: 10px 0 4px; font-size: 29px; font-weight: 800; letter-spacing: 0.3px; }
           .company-line { margin: 1px 0; font-size: 13px; }
           .x-box { width: 40px; height: 40px; border: 2px solid #222; margin: 0 auto 8px; text-align: center; line-height: 36px; font-size: 31px; font-weight: 700; }
@@ -415,8 +468,7 @@ const renderAndPrintFactura = ({ venta, orden, items }) => {
   printWindow.document.open();
   printWindow.document.write(html);
   printWindow.document.close();
-  printWindow.focus();
-  printWindow.print();
+  printWhenReady(printWindow);
 };
 
 const mapOrdenToForm = (orden) => ({
@@ -489,11 +541,11 @@ function OrdenesPage() {
   const [demoradaFilter, setDemoradaFilter] = useState(false);
   const [sortBy, setSortBy] = useState("fecha_creacion");
   const [sortDirection, setSortDirection] = useState("desc");
+  const [currentPage, setCurrentPage] = useState(1);
   const [ordenForm, setOrdenForm] = useState(initialOrden);
   const [editingId, setEditingId] = useState(null);
   const [detailId, setDetailId] = useState(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [movForm, setMovForm] = useState(initialMov);
   const [isLoadingEdit, setIsLoadingEdit] = useState(false);
   const [editLoadError, setEditLoadError] = useState("");
@@ -503,7 +555,6 @@ function OrdenesPage() {
   const [facturaError, setFacturaError] = useState("");
   const [facturaForm, setFacturaForm] = useState(initialFacturaForm);
   const [facturaOrden, setFacturaOrden] = useState(null);
-  const [isPrimeraFacturaOrden, setIsPrimeraFacturaOrden] = useState(true);
   const [facturaNotice, setFacturaNotice] = useState("");
   const [ultimaFacturaData, setUltimaFacturaData] = useState(null);
   const [isDispositivoManual, setIsDispositivoManual] = useState(false);
@@ -649,34 +700,52 @@ function OrdenesPage() {
     });
   }, [ordenes, sortBy, sortDirection]);
 
+  const PAGE_SIZE = 8;
+  const totalPages = Math.max(1, Math.ceil(ordenesOrdenadas.length / PAGE_SIZE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const ordenesPaginadas = useMemo(() => {
+    const start = (safeCurrentPage - 1) * PAGE_SIZE;
+    return ordenesOrdenadas.slice(start, start + PAGE_SIZE);
+  }, [ordenesOrdenadas, safeCurrentPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, estadoFilter, prioridadFilter, demoradaFilter]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
   const facturaItemsPreview = useMemo(() => {
     if (facturaForm.modo_detalle === "manual") {
-      const detalleManual = facturaForm.detalle_manual.trim();
-      if (!detalleManual) {
-        return [];
-      }
-
-      return [
-        {
-          tipo_item: "servicio",
-          producto_id: null,
-          descripcion: detalleManual,
-          cantidad: 1,
-          precio_unitario: 0
-        }
-      ];
+      return facturaForm.manual_items.map((item) => ({
+        tipo_item: "servicio",
+        producto_id: null,
+        descripcion: item.descripcion,
+        cantidad: 1,
+        precio_unitario: Number(item.precio_unitario) || 0
+      }));
     }
 
     return mapMovimientosToFacturaItems(facturaOrden?.movimientos || []);
-  }, [facturaForm.detalle_manual, facturaForm.modo_detalle, facturaOrden]);
+  }, [facturaForm.manual_items, facturaForm.modo_detalle, facturaOrden]);
+
+  const facturaTotalPreview = useMemo(
+    () => facturaItemsPreview.reduce((acc, item) => acc + Number(item.cantidad) * Number(item.precio_unitario), 0),
+    [facturaItemsPreview]
+  );
 
   const selectedCliente = useMemo(() => clientes.find((c) => String(c.id) === String(ordenForm.cliente_id)), [clientes, ordenForm.cliente_id]);
 
   const openCreate = () => {
     setEditingId(null);
     setEditingOrderNumber(null);
+    setDetailId(null);
     setEditLoadError("");
     setOrdenForm(initialOrden);
+    setMovForm(initialMov);
     setIsDispositivoManual(false);
     setIsFormOpen(true);
   };
@@ -684,6 +753,7 @@ function OrdenesPage() {
   const openEdit = async (orden) => {
     setIsLoadingEdit(true);
     setEditLoadError("");
+    setDetailId(orden.id);
 
     try {
       const detalleOrden = await queryClient.fetchQuery({
@@ -694,9 +764,11 @@ function OrdenesPage() {
       setEditingId(orden.id);
       setEditingOrderNumber(detalleOrden.nro_orden || null);
       setOrdenForm(mapOrdenToForm(detalleOrden));
+      setMovForm(initialMov);
       setIsDispositivoManual(false);
       setIsFormOpen(true);
     } catch (error) {
+      setDetailId(null);
       setEditLoadError(error.message || "No se pudo cargar la orden para editar.");
     } finally {
       setIsLoadingEdit(false);
@@ -730,11 +802,6 @@ function OrdenesPage() {
     }
   };
 
-  const openDetail = (orden) => {
-    setDetailId(orden.id);
-    setIsDetailOpen(true);
-  };
-
   const openFactura = async () => {
     if (!editingId) {
       return;
@@ -749,12 +816,6 @@ function OrdenesPage() {
         queryFn: () => api.ordenes.getById(editingId)
       });
 
-      const ventasOrden = await api.ventas.list({
-        origen: "orden",
-        orden_id: Number(detalleOrden.id)
-      });
-      setIsPrimeraFacturaOrden((ventasOrden || []).length === 0);
-
       setFacturaOrden(detalleOrden);
       setFacturaForm(initialFacturaForm);
       setIsFacturaOpen(true);
@@ -767,7 +828,7 @@ function OrdenesPage() {
 
   return (
     <div>
-      <div className="page-header">
+      <div className="page-header page-header--compact">
         <div>
           <h2 className="page-title">Ordenes de reparacion</h2>
           <p className="status">ABM de ordenes con circuito tecnico y prioridades.</p>
@@ -776,7 +837,7 @@ function OrdenesPage() {
         <button onClick={openCreate}>Nueva orden</button>
       </div>
 
-      <section className="card toolbar">
+      <section className="card toolbar" style={{ gridTemplateColumns: "1fr auto auto auto auto" }}>
         <input placeholder="Buscar por cliente, equipo o nro" value={search} onChange={(e) => setSearch(e.target.value)} />
         <select value={estadoFilter} onChange={(e) => setEstadoFilter(e.target.value)}>
           <option value="">Todos los estados</option>
@@ -795,21 +856,6 @@ function OrdenesPage() {
           <option value="alta">Alta</option>
           <option value="urgente">Urgente</option>
         </select>
-      </section>
-      <section className="card toolbar" style={{ gridTemplateColumns: "auto auto auto auto auto" }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <input type="checkbox" checked={demoradaFilter} onChange={(e) => setDemoradaFilter(e.target.checked)} />
-          Solo demoradas
-        </label>
-        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-          <option value="prioridad">Ordenar por prioridad</option>
-          <option value="estado">Ordenar por estado</option>
-          <option value="fecha_creacion">Ordenar por fecha de creacion</option>
-        </select>
-        <select value={sortDirection} onChange={(e) => setSortDirection(e.target.value)}>
-          <option value="desc">Descendente</option>
-          <option value="asc">Ascendente</option>
-        </select>
         <button className="secondary" onClick={() => ordenesQuery.refetch()}>
           Buscar
         </button>
@@ -822,6 +868,7 @@ function OrdenesPage() {
             setDemoradaFilter(false);
             setSortBy("fecha_creacion");
             setSortDirection("desc");
+            setCurrentPage(1);
           }}
         >
           Limpiar
@@ -851,7 +898,7 @@ function OrdenesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {ordenesOrdenadas.map((orden) => (
+                  {ordenesPaginadas.map((orden) => (
                     <tr
                       key={orden.id}
                       className={`orden-row ${orden.estado_actual === "entregada" ? "orden-row--entregada" : ""}`}
@@ -870,10 +917,9 @@ function OrdenesPage() {
                       {/* <td>{dayjs(orden.fecha_creacion).format("DD/MM/YYYY HH:mm")}</td> */}
                       <td>
                         <div className="actions">
-                          <button className="secondary" onClick={() => openDetail(orden)}>
-                            Ver
+                          <button className="secondary" onClick={() => openEdit(orden)}>
+                            Ver / Actualizar
                           </button>
-                          <button onClick={() => openEdit(orden)}>Editar</button>
                           <button className="secondary" onClick={() => handlePrintOrden(orden.id, orden)} disabled={isLoadingPrintOrden}>
                             {isLoadingPrintOrden ? "Preparando..." : "Imprimir"}
                           </button>
@@ -884,6 +930,24 @@ function OrdenesPage() {
                 </tbody>
               </table>
             </div>
+            {ordenesOrdenadas.length > PAGE_SIZE ? (
+              <div className="actions" style={{ marginTop: 10 }}>
+                <button type="button" className="secondary" onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))} disabled={safeCurrentPage === 1}>
+                  Anterior
+                </button>
+                <span className="status" style={{ alignSelf: "center" }}>
+                  Pagina {safeCurrentPage} de {totalPages}
+                </span>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                  disabled={safeCurrentPage === totalPages}
+                >
+                  Siguiente
+                </button>
+              </div>
+            ) : null}
           </>
         )}
       </section>
@@ -894,13 +958,15 @@ function OrdenesPage() {
           setIsFormOpen(false);
           setEditingId(null);
           setEditingOrderNumber(null);
+          setDetailId(null);
+          setMovForm(initialMov);
           setEditLoadError("");
         }}
         title={editingId ? `Editar orden ${formatOrderNumber(editingOrderNumber ?? editingId)}` : "Nueva orden"}
-        width={1180}
+        width="96vw"
       >
         <form
-          className="orden-form"
+          className="orden-form orden-form--compact"
           onSubmit={(e) => {
             e.preventDefault();
             if (isEditMode) {
@@ -1077,7 +1143,7 @@ function OrdenesPage() {
             </section>
           </div>
 
-          <div className="actions">
+          <div className="actions orden-form-actions">
             <button type="submit" disabled={saveOrdenMutation.isPending}>
               {editingId ? "Guardar cambios" : "Crear orden"}
             </button>
@@ -1097,8 +1163,95 @@ function OrdenesPage() {
               </button>
             ) : null}
           </div>
+
+          {isEditMode && detalle ? (
+            <>
+              <section className="card orden-edit-extra" style={{ marginTop: 12 }}>
+                <h3>Agregar movimiento</h3>
+                <div className="orden-inline-two">
+                  <label>
+                    Estado
+                    <select value={movForm.estado} onChange={(e) => setMovForm({ ...movForm, estado: e.target.value })}>
+                      <option value="ingresada">Ingresada</option>
+                      <option value="en_diagnostico">En diagnostico</option>
+                      <option value="en_reparacion">En reparacion</option>
+                      <option value="esperando_repuesto">Esperando repuesto</option>
+                      <option value="lista_para_entrega">Lista para entrega</option>
+                      <option value="entregada">Entregada</option>
+                      <option value="cancelada">Cancelada</option>
+                    </select>
+                  </label>
+                  <label>
+                    Prioridad (opcional)
+                    <select value={movForm.prioridad} onChange={(e) => setMovForm({ ...movForm, prioridad: e.target.value })}>
+                      <option value="">Sin cambios</option>
+                      <option value="baja">Baja</option>
+                      <option value="media">Media</option>
+                      <option value="alta">Alta</option>
+                      <option value="urgente">Urgente</option>
+                    </select>
+                  </label>
+                </div>
+                <label>
+                  Detalle
+                  <textarea value={movForm.detalle} onChange={(e) => setMovForm({ ...movForm, detalle: e.target.value })} />
+                </label>
+                <div className="actions" style={{ marginTop: 8 }}>
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={movimientoMutation.isPending}
+                    onClick={() => {
+                      const detalleMovimiento = movForm.detalle.trim();
+                      if (!detalleMovimiento || !detailId) {
+                        return;
+                      }
+
+                      movimientoMutation.mutate({
+                        estado: movForm.estado,
+                        detalle: detalleMovimiento,
+                        prioridad: movForm.prioridad || undefined
+                      });
+                    }}
+                  >
+                    {movimientoMutation.isPending ? "Guardando..." : "Guardar movimiento"}
+                  </button>
+                </div>
+              </section>
+
+              <section className="card orden-edit-extra" style={{ marginTop: 12 }}>
+                <h3>Movimientos</h3>
+                {(detalle.movimientos || []).length === 0 ? (
+                  <div className="empty-state">Todavia no hay movimientos cargados.</div>
+                ) : (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Fecha</th>
+                          <th>Estado</th>
+                          <th>Detalle</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(detalle.movimientos || []).map((m) => (
+                          <tr key={m.id}>
+                            <td>{dayjs(m.fecha).format("DD/MM/YYYY HH:mm")}</td>
+                            <td>{m.estado}</td>
+                            <td>{m.detalle}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            </>
+          ) : null}
+
           {isLoadingEdit ? <span className="status">Cargando datos de la orden...</span> : null}
           {editLoadError ? <span className="error">{editLoadError}</span> : null}
+          {movimientoMutation.error ? <span className="error">{movimientoMutation.error.message}</span> : null}
           {facturaError ? <span className="error">{facturaError}</span> : null}
           {saveOrdenMutation.error ? <span className="error">{saveOrdenMutation.error.message}</span> : null}
         </form>
@@ -1183,13 +1336,7 @@ function OrdenesPage() {
               e.preventDefault();
 
               if (facturaItemsPreview.length === 0) {
-                setFacturaError("Debe cargar un detalle manual o usar movimientos automaticos con contenido.");
-                return;
-              }
-
-              const montoFinalReparacion = Number(facturaForm.monto_final_reparacion);
-              if (isPrimeraFacturaOrden && (!Number.isFinite(montoFinalReparacion) || montoFinalReparacion <= 0)) {
-                setFacturaError("Debe ingresar el monto final de reparacion para la primera factura de esta orden.");
+                setFacturaError("Debe cargar items manuales o usar movimientos automaticos con contenido.");
                 return;
               }
 
@@ -1205,7 +1352,6 @@ function OrdenesPage() {
                   impuestos: 0,
                   forma_pago: facturaForm.forma_pago,
                   monto_pagado: 0,
-                  monto_final_reparacion: isPrimeraFacturaOrden ? montoFinalReparacion : undefined,
                   items: facturaItemsPreview
                 },
                 ordenSnapshot: facturaOrden,
@@ -1236,22 +1382,6 @@ function OrdenesPage() {
                   </select>
                 </label>
               </div>
-              {isPrimeraFacturaOrden ? (
-                <label>
-                  Monto final de reparacion
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={facturaForm.monto_final_reparacion}
-                    onChange={(e) => setFacturaForm({ ...facturaForm, monto_final_reparacion: e.target.value })}
-                    placeholder="Ej: 45000"
-                    required
-                  />
-                </label>
-              ) : (
-                <p className="status">La orden ya tuvo una factura previa. No se vuelve a solicitar monto final.</p>
-              )}
             </section>
 
             <section className="card">
@@ -1266,15 +1396,96 @@ function OrdenesPage() {
                 Cargar detalle manual
               </label>
               {facturaForm.modo_detalle === "manual" ? (
-                <label>
-                  Detalle
-                  <textarea
-                    value={facturaForm.detalle_manual}
-                    onChange={(e) => setFacturaForm({ ...facturaForm, detalle_manual: e.target.value })}
-                    placeholder="Ej: Reparacion de placa y limpieza completa"
-                    required
-                  />
-                </label>
+                <>
+                  <div className="orden-inline-two" style={{ marginTop: 8 }}>
+                    <label>
+                      Detalle
+                      <input
+                        value={facturaForm.manual_item_descripcion}
+                        onChange={(e) => setFacturaForm({ ...facturaForm, manual_item_descripcion: e.target.value })}
+                        placeholder="Ej: Reparacion de placa"
+                      />
+                    </label>
+                    <label>
+                      Precio unitario
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={facturaForm.manual_item_precio_unitario}
+                        onChange={(e) => setFacturaForm({ ...facturaForm, manual_item_precio_unitario: e.target.value })}
+                        placeholder="Ej: 45000"
+                      />
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    style={{ marginTop: 8 }}
+                    onClick={() => {
+                      const descripcion = facturaForm.manual_item_descripcion.trim();
+                      const precioUnitario = Number(facturaForm.manual_item_precio_unitario);
+
+                      if (!descripcion) {
+                        setFacturaError("Debe ingresar el detalle del item.");
+                        return;
+                      }
+
+                      if (!Number.isFinite(precioUnitario) || precioUnitario < 0) {
+                        setFacturaError("Debe ingresar un precio unitario valido (0 o mayor).");
+                        return;
+                      }
+
+                      setFacturaError("");
+                      setFacturaForm((prev) => ({
+                        ...prev,
+                        manual_items: [...prev.manual_items, { descripcion, precio_unitario: precioUnitario }],
+                        manual_item_descripcion: "",
+                        manual_item_precio_unitario: ""
+                      }));
+                    }}
+                  >
+                    Agregar item
+                  </button>
+
+                  {facturaForm.manual_items.length > 0 ? (
+                    <div className="table-wrap" style={{ marginTop: 8 }}>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Detalle</th>
+                            <th>Precio unitario</th>
+                            <th>Accion</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {facturaForm.manual_items.map((item, index) => (
+                            <tr key={`${item.descripcion}-${index}`}>
+                              <td>{item.descripcion}</td>
+                              <td>${Number(item.precio_unitario).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setFacturaForm((prev) => ({
+                                      ...prev,
+                                      manual_items: prev.manual_items.filter((_, currentIndex) => currentIndex !== index)
+                                    }));
+                                  }}
+                                >
+                                  Quitar
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="empty-state" style={{ marginTop: 8 }}>
+                      Todavia no hay items manuales cargados.
+                    </div>
+                  )}
+                </>
               ) : null}
 
               <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
@@ -1315,8 +1526,13 @@ function OrdenesPage() {
                           <td>{item.tipo_item}</td>
                           <td>{item.descripcion}</td>
                           <td>{Number(item.cantidad).toFixed(2)}</td>
-                          <td>-</td>
-                          <td>-</td>
+                          <td>${Number(item.precio_unitario).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td>
+                            ${Number(item.cantidad * item.precio_unitario).toLocaleString("es-AR", {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2
+                            })}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -1324,7 +1540,7 @@ function OrdenesPage() {
                 </div>
               )}
               <p className="status">
-                Los subtotales por detalle se muestran nulos y solo se imprime el total final de reparacion.
+                Total calculado: ${facturaTotalPreview.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
             </section>
 
@@ -1339,142 +1555,6 @@ function OrdenesPage() {
         )}
       </Modal>
 
-      <Modal
-        open={isDetailOpen}
-        onClose={() => {
-          setIsDetailOpen(false);
-          setDetailId(null);
-        }}
-        title={detalle ? `Orden ${formatOrderNumber(detalle.nro_orden)}` : "Detalle orden"}
-        width={1180}
-      >
-        {detalle ? (
-          <>
-            <div className="orden-detail-layout">
-              <section className="card orden-detail-card">
-                <h3>Datos de la orden</h3>
-                <div className="orden-detail-data-grid">
-                  <article className="orden-detail-data-item">
-                    <span className="status">Nro de orden</span>
-                    <strong>{formatOrderNumber(detalle.nro_orden)}</strong>
-                  </article>
-                  <article className="orden-detail-data-item">
-                    <span className="status">Cliente</span>
-                    <strong>{detalle.cliente_nombre || "-"}</strong>
-                  </article>
-                  <article className="orden-detail-data-item">
-                    <span className="status">Equipo</span>
-                    <strong>{detalle.equipo || "-"}</strong>
-                  </article>
-                  <article className="orden-detail-data-item">
-                    <span className="status">Marca</span>
-                    <strong>{detalle.marca || "-"}</strong>
-                  </article>
-                  <article className="orden-detail-data-item">
-                    <span className="status">Modelo</span>
-                    <strong>{detalle.modelo || "-"}</strong>
-                  </article>
-                  <article className="orden-detail-data-item">
-                    <span className="status">Contraseña / PIN</span>
-                    <strong>{detalle.contrasena_equipo || "-"}</strong>
-                  </article>
-                  <article className="orden-detail-data-item">
-                    <span className="status">Estado</span>
-                    <strong>{detalle.estado_actual || "-"}</strong>
-                  </article>
-                  <article className="orden-detail-data-item">
-                    <span className="status">Prioridad</span>
-                    <strong>{detalle.prioridad || "-"}</strong>
-                  </article>
-                  <article className="orden-detail-data-item">
-                    <span className="status">Fecha creacion</span>
-                    <strong>{dayjs(detalle.fecha_creacion).format("DD/MM/YYYY HH:mm")}</strong>
-                  </article>
-                </div>
-                <div className="orden-detail-actions">
-                  <button type="button" className="secondary" onClick={() => handlePrintOrden(detalle.id, detalle)} disabled={isLoadingPrintOrden}>
-                    {isLoadingPrintOrden ? "Preparando..." : "Imprimir orden"}
-                  </button>
-                </div>
-              </section>
-
-              <section className="card orden-detail-card">
-                <h3>Agregar movimiento</h3>
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    movimientoMutation.mutate({
-                      estado: movForm.estado,
-                      detalle: movForm.detalle,
-                      prioridad: movForm.prioridad || undefined
-                    });
-                  }}
-                >
-                  <label>
-                    Estado
-                    <select value={movForm.estado} onChange={(e) => setMovForm({ ...movForm, estado: e.target.value })}>
-                      <option value="ingresada">Ingresada</option>
-                      <option value="en_diagnostico">En diagnostico</option>
-                      <option value="en_reparacion">En reparacion</option>
-                      <option value="esperando_repuesto">Esperando repuesto</option>
-                      <option value="lista_para_entrega">Lista para entrega</option>
-                      <option value="entregada">Entregada</option>
-                      <option value="cancelada">Cancelada</option>
-                    </select>
-                  </label>
-                  <label>
-                    Prioridad (opcional)
-                    <select value={movForm.prioridad} onChange={(e) => setMovForm({ ...movForm, prioridad: e.target.value })}>
-                      <option value="">Sin cambios</option>
-                      <option value="baja">Baja</option>
-                      <option value="media">Media</option>
-                      <option value="alta">Alta</option>
-                      <option value="urgente">Urgente</option>
-                    </select>
-                  </label>
-                  <label>
-                    Detalle
-                    <textarea value={movForm.detalle} onChange={(e) => setMovForm({ ...movForm, detalle: e.target.value })} required />
-                  </label>
-                  <button className="secondary" type="submit" disabled={movimientoMutation.isPending}>
-                    Guardar movimiento
-                  </button>
-                </form>
-              </section>
-            </div>
-
-            <section className="card" style={{ marginTop: 12 }}>
-              <h3>Movimientos</h3>
-              {(detalle.movimientos || []).length === 0 ? (
-                <div className="empty-state">Todavia no hay movimientos cargados.</div>
-              ) : (
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Fecha</th>
-                        <th>Estado</th>
-                        <th>Detalle</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(detalle.movimientos || []).map((m) => (
-                        <tr key={m.id}>
-                          <td>{dayjs(m.fecha).format("DD/MM/YYYY HH:mm")}</td>
-                          <td>{m.estado}</td>
-                          <td>{m.detalle}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
-          </>
-        ) : (
-          <p>Cargando...</p>
-        )}
-      </Modal>
     </div>
   );
 }

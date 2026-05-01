@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import { api } from "../lib/api";
 import Modal from "../components/Modal";
-import logoCge from "../../assets/logo.jpeg";
+import logoCge from "../../assets/logo.jpeg?inline";
 
 const AFIP_ISSUER_NAME = import.meta.env.VITE_AFIP_ISSUER_NAME || "Federico Zabala";
 const AFIP_ISSUER_ADDRESS = import.meta.env.VITE_AFIP_ISSUER_ADDRESS || "Rivadavia 357";
@@ -17,6 +17,48 @@ const escapeHtml = (value) =>
     .replace(/>/g, "&gt;")
     .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#039;");
+
+const printWhenReady = (printWindow) => {
+  const tryPrint = () => {
+    let didPrint = false;
+    const safePrint = () => {
+      if (didPrint) {
+        return;
+      }
+      didPrint = true;
+      printWindow.focus();
+      printWindow.print();
+    };
+
+    const images = Array.from(printWindow.document.images || []);
+    if (images.length === 0) {
+      setTimeout(safePrint, 50);
+      return;
+    }
+
+    let pending = images.length;
+    const markDone = () => {
+      pending -= 1;
+      if (pending <= 0) {
+        setTimeout(safePrint, 50);
+      }
+    };
+
+    images.forEach((img) => {
+      if (img.complete && img.naturalWidth > 0) {
+        markDone();
+        return;
+      }
+      img.addEventListener("load", markDone, { once: true });
+      img.addEventListener("error", markDone, { once: true });
+    });
+
+    setTimeout(safePrint, 1500);
+  };
+
+  printWindow.addEventListener("load", tryPrint, { once: true });
+  setTimeout(tryPrint, 200);
+};
 
 const renderAndPrintVentaComprobante = (venta) => {
   const printWindow = window.open("", "_blank", "width=900,height=780");
@@ -138,8 +180,19 @@ const renderAndPrintVentaComprobante = (venta) => {
   printWindow.document.open();
   printWindow.document.write(html);
   printWindow.document.close();
-  printWindow.focus();
-  printWindow.print();
+  printWhenReady(printWindow);
+};
+
+const renderAndPrintRawHtml = (html) => {
+  const printWindow = window.open("", "_blank", "width=980,height=820");
+  if (!printWindow) {
+    return;
+  }
+
+  printWindow.document.open();
+  printWindow.document.write(html);
+  printWindow.document.close();
+  printWhenReady(printWindow);
 };
 
 const createEmptyItem = () => ({
@@ -162,6 +215,7 @@ function VentasPage() {
   const [formError, setFormError] = useState("");
   const [reprintVentaId, setReprintVentaId] = useState(null);
   const [reprintError, setReprintError] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
   const [form, setForm] = useState({
     tipo: "local",
     origen: "mostrador",
@@ -223,6 +277,24 @@ function VentasPage() {
   const ventas = ventasQuery.data || [];
   const ventaDetalle = detalleQuery.data;
 
+  const PAGE_SIZE = 8;
+  const totalPages = Math.max(1, Math.ceil(ventas.length / PAGE_SIZE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const ventasPaginadas = useMemo(() => {
+    const start = (safeCurrentPage - 1) * PAGE_SIZE;
+    return ventas.slice(start, start + PAGE_SIZE);
+  }, [ventas, safeCurrentPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, tipoFilter, origenFilter]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
   const openCreate = () => {
     setFormError("");
     setForm({
@@ -253,6 +325,12 @@ function VentasPage() {
         queryKey: ["venta-detalle", ventaId],
         queryFn: () => api.ventas.getById(ventaId)
       });
+
+      if (ventaDetalleCompleto?.origen === "orden") {
+        const technicalReportHtml = await api.ventas.getTechnicalReportHtml(ventaId);
+        renderAndPrintRawHtml(technicalReportHtml);
+        return;
+      }
 
       renderAndPrintVentaComprobante(ventaDetalleCompleto);
     } catch (error) {
@@ -332,7 +410,7 @@ function VentasPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {ventas.map((v) => (
+                  {ventasPaginadas.map((v) => (
                     <tr key={v.id}>
                       <td>{v.id}</td>
                       <td>{v.tipo}</td>
@@ -356,6 +434,24 @@ function VentasPage() {
                 </tbody>
               </table>
             </div>
+            {ventas.length > PAGE_SIZE ? (
+              <div className="actions" style={{ marginTop: 10 }}>
+                <button type="button" className="secondary" onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))} disabled={safeCurrentPage === 1}>
+                  Anterior
+                </button>
+                <span className="status" style={{ alignSelf: "center" }}>
+                  Pagina {safeCurrentPage} de {totalPages}
+                </span>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                  disabled={safeCurrentPage === totalPages}
+                >
+                  Siguiente
+                </button>
+              </div>
+            ) : null}
           </>
         )}
       </section>
