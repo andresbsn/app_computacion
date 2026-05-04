@@ -812,7 +812,8 @@ function OrdenesPage() {
     }
   };
 
-  const openFactura = async (ordenId = editingId) => {
+  const openFactura = async (ordenIdOrEvent = editingId) => {
+    const ordenId = typeof ordenIdOrEvent === "number" || typeof ordenIdOrEvent === "string" ? ordenIdOrEvent : editingId;
     if (!ordenId) {
       return;
     }
@@ -1213,7 +1214,7 @@ function OrdenesPage() {
               {editingId ? "Guardar cambios" : "Crear orden"}
             </button>
             {isEditMode ? (
-              <button type="button" className="secondary" onClick={openFactura} disabled={isLoadingFacturaOrden}>
+              <button type="button" className="secondary" onClick={() => openFactura()} disabled={isLoadingFacturaOrden}>
                 {isLoadingFacturaOrden ? "Cargando orden..." : "Generar factura"}
               </button>
             ) : null}
