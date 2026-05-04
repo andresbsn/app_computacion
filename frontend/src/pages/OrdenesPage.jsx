@@ -39,9 +39,8 @@ const initialClienteForm = {
 };
 
 const initialMov = {
-  estado: "en_diagnostico",
   detalle: "",
-  prioridad: ""
+  precio: ""
 };
 
 const initialFacturaForm = {
@@ -70,9 +69,9 @@ const mapMovimientosToFacturaItems = (movimientos = []) =>
     .map((mov) => ({
       tipo_item: "servicio",
       producto_id: null,
-      descripcion: `[${mov.estado}] ${mov.detalle}`,
+      descripcion: mov.detalle,
       cantidad: 1,
-      precio_unitario: 0
+      precio_unitario: Number(mov.precio) || 0
     }));
 
 const escapeHtml = (value) =>
@@ -86,17 +85,18 @@ const escapeHtml = (value) =>
 const formatOrderNumber = (value) => `#${String(value ?? "-").padStart(7, "0")}`;
 
 const printWhenReady = (printWindow) => {
-  const tryPrint = () => {
-    let didPrint = false;
-    const safePrint = () => {
-      if (didPrint) {
-        return;
-      }
-      didPrint = true;
-      printWindow.focus();
-      printWindow.print();
-    };
+  let didPrint = false;
 
+  const safePrint = () => {
+    if (didPrint) {
+      return;
+    }
+    didPrint = true;
+    printWindow.focus();
+    printWindow.print();
+  };
+
+  const tryPrint = () => {
     const images = Array.from(printWindow.document.images || []);
     if (images.length === 0) {
       setTimeout(safePrint, 50);
@@ -297,6 +297,7 @@ const renderAndPrintOrden = (orden) => {
               padding: 0;
               break-inside: avoid;
             }
+            .copy + .copy { margin-top: 0; }
             .copy-break { page-break-after: always; break-after: page; }
           }
         </style>
@@ -552,6 +553,7 @@ function OrdenesPage() {
   const [isFacturaOpen, setIsFacturaOpen] = useState(false);
   const [isLoadingFacturaOrden, setIsLoadingFacturaOrden] = useState(false);
   const [isLoadingPrintOrden, setIsLoadingPrintOrden] = useState(false);
+  const [isFinalizandoOrdenId, setIsFinalizandoOrdenId] = useState(null);
   const [facturaError, setFacturaError] = useState("");
   const [facturaForm, setFacturaForm] = useState(initialFacturaForm);
   const [facturaOrden, setFacturaOrden] = useState(null);
@@ -633,6 +635,14 @@ function OrdenesPage() {
       setMovForm(initialMov);
       queryClient.invalidateQueries({ queryKey: ["ordenes"] });
       queryClient.invalidateQueries({ queryKey: ["orden-detalle", detailId] });
+    }
+  });
+
+  const finalizarOrdenMutation = useMutation({
+    mutationFn: ({ ordenId, payload }) => api.ordenes.update(ordenId, payload),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["ordenes"] });
+      queryClient.invalidateQueries({ queryKey: ["orden-detalle", variables.ordenId] });
     }
   });
 
@@ -802,8 +812,8 @@ function OrdenesPage() {
     }
   };
 
-  const openFactura = async () => {
-    if (!editingId) {
+  const openFactura = async (ordenId = editingId) => {
+    if (!ordenId) {
       return;
     }
 
@@ -812,8 +822,8 @@ function OrdenesPage() {
 
     try {
       const detalleOrden = await queryClient.fetchQuery({
-        queryKey: ["orden-detalle", editingId],
-        queryFn: () => api.ordenes.getById(editingId)
+        queryKey: ["orden-detalle", ordenId],
+        queryFn: () => api.ordenes.getById(ordenId)
       });
 
       setFacturaOrden(detalleOrden);
@@ -823,6 +833,51 @@ function OrdenesPage() {
       setFacturaError(error.message || "No se pudo cargar la orden para facturar.");
     } finally {
       setIsLoadingFacturaOrden(false);
+    }
+  };
+
+  const handleFinalizarOrden = async (orden) => {
+    setFacturaError("");
+    setFacturaNotice("");
+    setIsFinalizandoOrdenId(orden.id);
+
+    try {
+      if (orden.estado_actual !== "entregada") {
+        await finalizarOrdenMutation.mutateAsync({
+          ordenId: orden.id,
+          payload: { estado_actual: "entregada" }
+        });
+      }
+
+      const ventasOrden = await api.ventas.list({ origen: "orden", orden_id: orden.id });
+      const ventaExistente = Array.isArray(ventasOrden) && ventasOrden.length > 0 ? ventasOrden[0] : null;
+
+      if (ventaExistente?.id) {
+        const [detalleOrden, ventaDetalle] = await Promise.all([
+          queryClient.fetchQuery({
+            queryKey: ["orden-detalle", orden.id],
+            queryFn: () => api.ordenes.getById(orden.id)
+          }),
+          api.ventas.getById(ventaExistente.id)
+        ]);
+
+        const facturaData = {
+          venta: ventaDetalle,
+          orden: detalleOrden,
+          items: ventaDetalle?.items || []
+        };
+
+        setUltimaFacturaData(facturaData);
+        setFacturaNotice("Orden finalizada. Se imprimio la factura existente.");
+        renderAndPrintFactura(facturaData);
+        return;
+      }
+
+      await openFactura(orden.id);
+    } catch (error) {
+      setFacturaError(error.message || "No se pudo finalizar la orden.");
+    } finally {
+      setIsFinalizandoOrdenId(null);
     }
   };
 
@@ -920,6 +975,16 @@ function OrdenesPage() {
                           <button className="secondary" onClick={() => openEdit(orden)}>
                             Ver / Actualizar
                           </button>
+                          {orden.estado_actual !== "entregada" ? (
+                            <button
+                              className="secondary"
+                              type="button"
+                              onClick={() => handleFinalizarOrden(orden)}
+                              disabled={isFinalizandoOrdenId === orden.id || isLoadingFacturaOrden}
+                            >
+                              {isFinalizandoOrdenId === orden.id ? "Finalizando..." : "Finalizar orden"}
+                            </button>
+                          ) : null}
                           <button className="secondary" onClick={() => handlePrintOrden(orden.id, orden)} disabled={isLoadingPrintOrden}>
                             {isLoadingPrintOrden ? "Preparando..." : "Imprimir"}
                           </button>
@@ -1168,33 +1233,20 @@ function OrdenesPage() {
             <>
               <section className="card orden-edit-extra" style={{ marginTop: 12 }}>
                 <h3>Agregar movimiento</h3>
-                <div className="orden-inline-two">
-                  <label>
-                    Estado
-                    <select value={movForm.estado} onChange={(e) => setMovForm({ ...movForm, estado: e.target.value })}>
-                      <option value="ingresada">Ingresada</option>
-                      <option value="en_diagnostico">En diagnostico</option>
-                      <option value="en_reparacion">En reparacion</option>
-                      <option value="esperando_repuesto">Esperando repuesto</option>
-                      <option value="lista_para_entrega">Lista para entrega</option>
-                      <option value="entregada">Entregada</option>
-                      <option value="cancelada">Cancelada</option>
-                    </select>
-                  </label>
-                  <label>
-                    Prioridad (opcional)
-                    <select value={movForm.prioridad} onChange={(e) => setMovForm({ ...movForm, prioridad: e.target.value })}>
-                      <option value="">Sin cambios</option>
-                      <option value="baja">Baja</option>
-                      <option value="media">Media</option>
-                      <option value="alta">Alta</option>
-                      <option value="urgente">Urgente</option>
-                    </select>
-                  </label>
-                </div>
                 <label>
                   Detalle
                   <textarea value={movForm.detalle} onChange={(e) => setMovForm({ ...movForm, detalle: e.target.value })} />
+                </label>
+                <label>
+                  Precio
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={movForm.precio}
+                    onChange={(e) => setMovForm({ ...movForm, precio: e.target.value })}
+                    placeholder="Ej: 45000"
+                  />
                 </label>
                 <div className="actions" style={{ marginTop: 8 }}>
                   <button
@@ -1203,14 +1255,18 @@ function OrdenesPage() {
                     disabled={movimientoMutation.isPending}
                     onClick={() => {
                       const detalleMovimiento = movForm.detalle.trim();
+                      const precioMovimiento = Number(movForm.precio);
                       if (!detalleMovimiento || !detailId) {
                         return;
                       }
 
+                      if (!Number.isFinite(precioMovimiento) || precioMovimiento < 0) {
+                        return;
+                      }
+
                       movimientoMutation.mutate({
-                        estado: movForm.estado,
                         detalle: detalleMovimiento,
-                        prioridad: movForm.prioridad || undefined
+                        precio: precioMovimiento
                       });
                     }}
                   >
@@ -1231,6 +1287,7 @@ function OrdenesPage() {
                           <th>Fecha</th>
                           <th>Estado</th>
                           <th>Detalle</th>
+                          <th>Precio</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1239,6 +1296,7 @@ function OrdenesPage() {
                             <td>{dayjs(m.fecha).format("DD/MM/YYYY HH:mm")}</td>
                             <td>{m.estado}</td>
                             <td>{m.detalle}</td>
+                            <td>${Number(m.precio || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                           </tr>
                         ))}
                       </tbody>

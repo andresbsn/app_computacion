@@ -157,9 +157,13 @@ CREATE TABLE IF NOT EXISTS ${schema}.ordenes_movimientos (
     estado IN ('ingresada', 'en_diagnostico', 'en_reparacion', 'esperando_repuesto', 'lista_para_entrega', 'entregada', 'cancelada')
   ),
   detalle TEXT NOT NULL,
+  precio NUMERIC(12, 2) NOT NULL DEFAULT 0,
   usuario_id BIGINT REFERENCES ${schema}.usuarios(id),
   fecha TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE ${schema}.ordenes_movimientos
+  ADD COLUMN IF NOT EXISTS precio NUMERIC(12, 2) NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS ${schema}.ventas (
   id BIGSERIAL PRIMARY KEY,

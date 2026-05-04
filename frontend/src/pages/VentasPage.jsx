@@ -19,17 +19,18 @@ const escapeHtml = (value) =>
     .replace(/'/g, "&#039;");
 
 const printWhenReady = (printWindow) => {
-  const tryPrint = () => {
-    let didPrint = false;
-    const safePrint = () => {
-      if (didPrint) {
-        return;
-      }
-      didPrint = true;
-      printWindow.focus();
-      printWindow.print();
-    };
+  let didPrint = false;
 
+  const safePrint = () => {
+    if (didPrint) {
+      return;
+    }
+    didPrint = true;
+    printWindow.focus();
+    printWindow.print();
+  };
+
+  const tryPrint = () => {
     const images = Array.from(printWindow.document.images || []);
     if (images.length === 0) {
       setTimeout(safePrint, 50);

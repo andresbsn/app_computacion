@@ -19,6 +19,7 @@ Editar `.env` y ajustar al menos:
 - `JWT_SECRET` (obligatorio, seguro)
 - `FRONTEND_URL` (ej: `http://tu-dominio.com` o `http://IP_PUBLICA`)
 - `DB_PASSWORD` (recomendado cambiar)
+- `SMTP_USER`, `SMTP_PASS` y `SMTP_FROM` (obligatorios si querés envio de emails)
 
 ## 4) Levantar contenedores
 ```bash

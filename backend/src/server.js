@@ -208,8 +208,9 @@ const ordenUpdateSchema = z
   });
 
 const ordenMovimientoSchema = z.object({
-  estado: z.enum(ORDEN_ESTADOS),
+  estado: z.enum(ORDEN_ESTADOS).optional(),
   detalle: z.string().trim().min(1),
+  precio: z.coerce.number().min(0).optional().default(0),
   usuario_id: z.coerce.number().int().positive().optional().nullable(),
   prioridad: z.enum(ORDEN_PRIORIDADES).optional()
 });
@@ -1643,7 +1644,7 @@ app.get("/ordenes-reparacion/:id", async (req, res) => {
     }
 
     const movimientosQuery = `
-      SELECT id, orden_id, estado, detalle, usuario_id, fecha
+      SELECT id, orden_id, estado, detalle, precio, usuario_id, fecha
       FROM ${schema}.ordenes_movimientos
       WHERE orden_id = $1
       ORDER BY fecha ASC, id ASC
@@ -1720,13 +1721,14 @@ app.post("/ordenes-reparacion", async (req, res) => {
         const ordenCreada = ordenResult.rows[0];
 
         const insertMovimientoQuery = `
-          INSERT INTO ${schema}.ordenes_movimientos (orden_id, estado, detalle, usuario_id)
-          VALUES ($1, $2, $3, $4)
+          INSERT INTO ${schema}.ordenes_movimientos (orden_id, estado, detalle, precio, usuario_id)
+          VALUES ($1, $2, $3, $4, $5)
         `;
         await client.query(insertMovimientoQuery, [
           ordenCreada.id,
           ordenCreada.estado_actual,
           "Orden creada",
+          0,
           ordenCreada.created_by
         ]);
 
@@ -1830,7 +1832,7 @@ app.get("/ordenes-reparacion/:id/movimientos", async (req, res) => {
     }
 
     const query = `
-      SELECT id, orden_id, estado, detalle, usuario_id, fecha
+      SELECT id, orden_id, estado, detalle, precio, usuario_id, fecha
       FROM ${schema}.ordenes_movimientos
       WHERE orden_id = $1
       ORDER BY fecha ASC, id ASC
@@ -1856,7 +1858,7 @@ app.post("/ordenes-reparacion/:id/movimientos", async (req, res) => {
 
       try {
         const ordenResult = await client.query(
-          `SELECT id, prioridad FROM ${schema}.ordenes_reparacion WHERE id = $1 FOR UPDATE`,
+          `SELECT id, prioridad, estado_actual FROM ${schema}.ordenes_reparacion WHERE id = $1 FOR UPDATE`,
           [id]
         );
         if (!ordenResult.rowCount) {
@@ -1864,30 +1866,39 @@ app.post("/ordenes-reparacion/:id/movimientos", async (req, res) => {
           return null;
         }
 
-        const updateFields = ["estado_actual = $1"];
-        const updateValues = [body.estado];
+        const updateFields = [];
+        const updateValues = [];
+
+        if (body.estado) {
+          updateValues.push(body.estado);
+          updateFields.push(`estado_actual = $${updateValues.length}`);
+        }
 
         if (body.prioridad) {
           updateValues.push(body.prioridad);
           updateFields.push(`prioridad = $${updateValues.length}`);
         }
 
-        if (body.estado === "entregada" || body.estado === "cancelada") {
+        if (body.estado && (body.estado === "entregada" || body.estado === "cancelada")) {
           updateFields.push("fecha_cierre = NOW()");
         }
 
-        updateValues.push(id);
-        await client.query(
-          `UPDATE ${schema}.ordenes_reparacion SET ${updateFields.join(", ")} WHERE id = $${updateValues.length}`,
-          updateValues
-        );
+        if (updateFields.length > 0) {
+          updateValues.push(id);
+          await client.query(
+            `UPDATE ${schema}.ordenes_reparacion SET ${updateFields.join(", ")} WHERE id = $${updateValues.length}`,
+            updateValues
+          );
+        }
+
+        const estadoMovimiento = body.estado || ordenResult.rows[0].estado_actual;
 
         const insertQuery = `
-          INSERT INTO ${schema}.ordenes_movimientos (orden_id, estado, detalle, usuario_id)
-          VALUES ($1, $2, $3, $4)
-          RETURNING id, orden_id, estado, detalle, usuario_id, fecha
+          INSERT INTO ${schema}.ordenes_movimientos (orden_id, estado, detalle, precio, usuario_id)
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING id, orden_id, estado, detalle, precio, usuario_id, fecha
         `;
-        const movimientoResult = await client.query(insertQuery, [id, body.estado, body.detalle, body.usuario_id ?? null]);
+        const movimientoResult = await client.query(insertQuery, [id, estadoMovimiento, body.detalle, body.precio, body.usuario_id ?? null]);
 
         await client.query("COMMIT");
         return movimientoResult.rows[0];
