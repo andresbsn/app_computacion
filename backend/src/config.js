@@ -11,6 +11,15 @@ export const config = {
   port: toNumber(process.env.PORT, 3000),
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:5173",
   jwtSecret: process.env.JWT_SECRET || "change-me",
+  afip: {
+    enabled: process.env.AFIP_ENABLED === "true",
+    cuit: process.env.AFIP_CUIT || "",
+    production: process.env.AFIP_PRODUCTION === "true",
+    puntoVenta: toNumber(process.env.AFIP_PTO_VTA, 1),
+    cbteTipo: toNumber(process.env.AFIP_CBTE_TIPO, 11),
+    certPath: process.env.AFIP_CERT_PATH || "./credenciales/CGEELECTRONICA.crt",
+    keyPath: process.env.AFIP_KEY_PATH || "./credenciales/privada.key"
+  },
   smtp: {
     host: process.env.SMTP_HOST || "smtp.gmail.com",
     port: toNumber(process.env.SMTP_PORT, 587),

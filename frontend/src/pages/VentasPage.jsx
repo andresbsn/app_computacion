@@ -219,6 +219,7 @@ function VentasPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [form, setForm] = useState({
     tipo: "local",
+    afip_tipo_comprobante: "B",
     origen: "mostrador",
     cliente_id: "",
     orden_id: "",
@@ -252,6 +253,7 @@ function VentasPage() {
     onSuccess: () => {
       setForm({
         tipo: "local",
+        afip_tipo_comprobante: "B",
         origen: "mostrador",
         cliente_id: "",
         orden_id: "",
@@ -300,6 +302,7 @@ function VentasPage() {
     setFormError("");
     setForm({
       tipo: "local",
+      afip_tipo_comprobante: "B",
       origen: "mostrador",
       cliente_id: "",
       orden_id: "",
@@ -491,6 +494,7 @@ function VentasPage() {
             setFormError("");
             createMutation.mutate({
               ...form,
+              afip_tipo_comprobante: form.tipo === "afip" ? form.afip_tipo_comprobante : null,
               cliente_id: form.cliente_id ? Number(form.cliente_id) : null,
               orden_id: form.orden_id ? Number(form.orden_id) : null,
               descuento: Number(form.descuento || 0),
@@ -512,6 +516,19 @@ function VentasPage() {
               <option value="afip">AFIP</option>
             </select>
           </label>
+          {form.tipo === "afip" ? (
+            <label>
+              Comprobante AFIP
+              <select
+                value={form.afip_tipo_comprobante}
+                onChange={(e) => setForm({ ...form, afip_tipo_comprobante: e.target.value })}
+                required
+              >
+                <option value="A">Factura A</option>
+                <option value="B">Factura B</option>
+              </select>
+            </label>
+          ) : null}
           <label>
             Origen
             <select value={form.origen} onChange={(e) => setForm({ ...form, origen: e.target.value })}>

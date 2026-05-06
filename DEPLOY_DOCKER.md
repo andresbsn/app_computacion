@@ -20,6 +20,11 @@ Editar `.env` y ajustar al menos:
 - `FRONTEND_URL` (ej: `http://tu-dominio.com` o `http://IP_PUBLICA`)
 - `DB_PASSWORD` (recomendado cambiar)
 - `SMTP_USER`, `SMTP_PASS` y `SMTP_FROM` (obligatorios si querés envio de emails)
+- `AFIP_ENABLED=true`, `AFIP_CUIT`, `AFIP_PTO_VTA`, `AFIP_CBTE_TIPO` (si querés emitir comprobantes AFIP)
+
+Si vas a usar AFIP, también copiar en el VPS los certificados dentro de `backend/credenciales/`:
+- `CGEELECTRONICA.crt`
+- `privada.key`
 
 ## 4) Levantar contenedores
 ```bash

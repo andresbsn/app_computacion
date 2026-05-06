@@ -45,6 +45,7 @@ const initialMov = {
 
 const initialFacturaForm = {
   tipo: "local",
+  afip_tipo_comprobante: "B",
   forma_pago: "efectivo",
   modo_detalle: "manual",
   manual_item_descripcion: "",
@@ -1404,6 +1405,7 @@ function OrdenesPage() {
               facturarOrdenMutation.mutate({
                 payload: {
                   tipo: facturaForm.tipo,
+                  afip_tipo_comprobante: facturaForm.tipo === "afip" ? facturaForm.afip_tipo_comprobante : null,
                   origen: "orden",
                   orden_id: Number(facturaOrden.id),
                   cliente_id: Number(facturaOrden.cliente_id),
@@ -1431,6 +1433,18 @@ function OrdenesPage() {
                     <option value="afip">AFIP</option>
                   </select>
                 </label>
+                {facturaForm.tipo === "afip" ? (
+                  <label>
+                    Comprobante AFIP
+                    <select
+                      value={facturaForm.afip_tipo_comprobante}
+                      onChange={(e) => setFacturaForm({ ...facturaForm, afip_tipo_comprobante: e.target.value })}
+                    >
+                      <option value="A">Factura A</option>
+                      <option value="B">Factura B</option>
+                    </select>
+                  </label>
+                ) : null}
                 <label>
                   Forma de pago
                   <select value={facturaForm.forma_pago} onChange={(e) => setFacturaForm({ ...facturaForm, forma_pago: e.target.value })}>

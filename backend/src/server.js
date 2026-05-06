@@ -3,6 +3,7 @@ import cors from "cors";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
+import Afip from "@afipsdk/afip.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -219,6 +220,11 @@ const VENTA_TIPOS = ["afip", "local"];
 const VENTA_ORIGENES = ["orden", "mostrador"];
 const FORMA_PAGO = ["efectivo", "transferencia", "tarjeta", "mixto"];
 const VENTA_ITEM_TIPOS = ["producto", "servicio", "repuesto"];
+const AFIP_TIPOS_COMPROBANTE = ["A", "B"];
+const AFIP_CBTE_TIPO_BY_LETTER = {
+  A: 1,
+  B: 6
+};
 
 const ventaItemSchema = z
   .object({
@@ -236,6 +242,7 @@ const ventaItemSchema = z
 const ventaCreateSchema = z
   .object({
     tipo: z.enum(VENTA_TIPOS),
+    afip_tipo_comprobante: z.enum(AFIP_TIPOS_COMPROBANTE).optional().nullable(),
     cliente_id: z.coerce.number().int().positive().optional().nullable(),
     origen: z.enum(VENTA_ORIGENES),
     orden_id: z.coerce.number().int().positive().optional().nullable(),
@@ -251,6 +258,14 @@ const ventaCreateSchema = z
         code: z.ZodIssueCode.custom,
         path: ["orden_id"],
         message: "orden_id es obligatorio cuando origen es 'orden'"
+      });
+    }
+
+    if (data.tipo === "afip" && !data.afip_tipo_comprobante) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["afip_tipo_comprobante"],
+        message: "afip_tipo_comprobante es obligatorio cuando tipo es 'afip'"
       });
     }
   });
@@ -278,6 +293,136 @@ const DATE_FORMATTER = new Intl.DateTimeFormat("es-AR", {
 });
 
 let smtpTransporter = null;
+let afipClient = null;
+let afipClientInitError = null;
+
+const resolveAfipFilePath = (filePath) =>
+  path.isAbsolute(filePath) ? filePath : path.resolve(__dirname, "..", filePath);
+
+const normalizeDigits = (value) => String(value ?? "").replace(/\D/g, "");
+
+const formatAfipDate = (date = new Date()) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return Number(`${year}${month}${day}`);
+};
+
+const parseAfipDate = (value) => {
+  const raw = String(value ?? "");
+  if (!/^\d{8}$/.test(raw)) {
+    return null;
+  }
+  return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+};
+
+const resolveAfipDocument = (cliente) => {
+  const cuit = normalizeDigits(cliente?.cuit);
+  if (cuit.length === 11) {
+    return { DocTipo: 80, DocNro: Number(cuit) };
+  }
+
+  const documento = normalizeDigits(cliente?.documento);
+  if (documento.length >= 7 && documento.length <= 8) {
+    return { DocTipo: 96, DocNro: Number(documento) };
+  }
+
+  return { DocTipo: 99, DocNro: 0 };
+};
+
+const resolveAfipCbteTipoCode = (afipTipoComprobante) => {
+  if (afipTipoComprobante && AFIP_CBTE_TIPO_BY_LETTER[afipTipoComprobante]) {
+    return AFIP_CBTE_TIPO_BY_LETTER[afipTipoComprobante];
+  }
+  return config.afip.cbteTipo;
+};
+
+const getAfipClient = () => {
+  if (!config.afip.enabled) {
+    return null;
+  }
+
+  if (afipClient) {
+    return afipClient;
+  }
+
+  if (afipClientInitError) {
+    throw afipClientInitError;
+  }
+
+  const cuit = Number(config.afip.cuit);
+  if (!Number.isInteger(cuit) || cuit <= 0) {
+    afipClientInitError = new Error("AFIP_CUIT invalido");
+    throw afipClientInitError;
+  }
+
+  try {
+    const cert = fs.readFileSync(resolveAfipFilePath(config.afip.certPath), "utf8");
+    const key = fs.readFileSync(resolveAfipFilePath(config.afip.keyPath), "utf8");
+
+    afipClient = new Afip({
+      CUIT: cuit,
+      cert,
+      key,
+      production: config.afip.production
+    });
+
+    return afipClient;
+  } catch (error) {
+    afipClientInitError = new Error(`No se pudo inicializar AFIP: ${error.message}`);
+    throw afipClientInitError;
+  }
+};
+
+const createAfipVoucher = async ({ total, cliente, afipTipoComprobante }) => {
+  const afip = getAfipClient();
+  if (!afip) {
+    throw new Error("AFIP no esta habilitado (AFIP_ENABLED=false)");
+  }
+
+  const ptoVta = config.afip.puntoVenta;
+  const cbteTipo = resolveAfipCbteTipoCode(afipTipoComprobante);
+  const totalRounded = Number(Number(total).toFixed(2));
+  const doc = resolveAfipDocument(cliente);
+
+  const billing = afip.ElectronicBilling;
+  const lastVoucher = await billing.getLastVoucher(ptoVta, cbteTipo);
+  const nextVoucher = Number(lastVoucher || 0) + 1;
+
+  const request = {
+    CantReg: 1,
+    PtoVta: ptoVta,
+    CbteTipo: cbteTipo,
+    Concepto: 1,
+    DocTipo: doc.DocTipo,
+    DocNro: doc.DocNro,
+    CbteDesde: nextVoucher,
+    CbteHasta: nextVoucher,
+    CbteFch: formatAfipDate(),
+    ImpTotal: totalRounded,
+    ImpTotConc: 0,
+    ImpNeto: totalRounded,
+    ImpOpEx: 0,
+    ImpIVA: 0,
+    ImpTrib: 0,
+    MonId: "PES",
+    MonCotiz: 1
+  };
+
+  const response = await billing.createVoucher(request);
+
+  return {
+    numero: `${String(ptoVta).padStart(4, "0")}-${String(nextVoucher).padStart(8, "0")}`,
+    cae: response?.CAE || null,
+    caeVto: parseAfipDate(response?.CAEFchVto),
+    raw: {
+      request,
+      response,
+      tipo_comprobante: afipTipoComprobante || null,
+      environment: config.afip.production ? "produccion" : "homologacion"
+    }
+  };
+};
 
 const nextComprobanteNumber = async (client, tipo) => {
   const result = await client.query(
@@ -1460,14 +1605,57 @@ app.post("/ventas", async (req, res) => {
           );
         }
 
-        const numeroComprobante = await nextComprobanteNumber(client, body.tipo);
+        let numeroComprobante = null;
+        let cae = null;
+        let caeVto = null;
+        let rawRespuestaAfip = null;
+
+        if (body.tipo === "afip") {
+          let clienteFacturacion = null;
+          if (clienteIdFinal) {
+            const clienteResult = await client.query(
+              `SELECT id, documento, cuit FROM ${schema}.clientes WHERE id = $1`,
+              [clienteIdFinal]
+            );
+
+            if (!clienteResult.rowCount) {
+              await client.query("ROLLBACK");
+              return { error: { code: 400, message: "Cliente no encontrado para facturacion AFIP" } };
+            }
+
+            clienteFacturacion = clienteResult.rows[0];
+          }
+
+          try {
+            const afipVoucher = await createAfipVoucher({
+              total: totalFinal,
+              cliente: clienteFacturacion,
+              afipTipoComprobante: body.afip_tipo_comprobante
+            });
+            numeroComprobante = afipVoucher.numero;
+            cae = afipVoucher.cae;
+            caeVto = afipVoucher.caeVto;
+            rawRespuestaAfip = afipVoucher.raw;
+          } catch (afipError) {
+            await client.query("ROLLBACK");
+            return {
+              error: {
+                code: 400,
+                message: `Error al emitir comprobante AFIP: ${afipError.message}`
+              }
+            };
+          }
+        } else {
+          numeroComprobante = await nextComprobanteNumber(client, body.tipo);
+        }
+
         const comprobanteResult = await client.query(
           `
             INSERT INTO ${schema}.comprobantes (venta_id, tipo, numero, cae, cae_vto, raw_respuesta_afip)
-            VALUES ($1, $2, $3, NULL, NULL, NULL)
+            VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id, venta_id, tipo, numero, cae, cae_vto, fecha_emision
           `,
-          [ventaCreada.id, body.tipo, numeroComprobante]
+          [ventaCreada.id, body.tipo, numeroComprobante, cae, caeVto, rawRespuestaAfip]
         );
 
         await client.query("COMMIT");
