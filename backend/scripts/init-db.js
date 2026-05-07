@@ -174,11 +174,19 @@ CREATE TABLE IF NOT EXISTS ${schema}.ventas (
   subtotal NUMERIC(12, 2) NOT NULL DEFAULT 0,
   descuento NUMERIC(12, 2) NOT NULL DEFAULT 0,
   impuestos NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  afip_iva_alicuota NUMERIC(5, 2),
+  afip_iva_importe NUMERIC(12, 2) NOT NULL DEFAULT 0,
   total NUMERIC(12, 2) NOT NULL DEFAULT 0,
   forma_pago VARCHAR(20) NOT NULL CHECK (forma_pago IN ('efectivo', 'transferencia', 'tarjeta', 'mixto')),
   estado VARCHAR(20) NOT NULL DEFAULT 'confirmada',
   fecha TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE ${schema}.ventas
+  ADD COLUMN IF NOT EXISTS afip_iva_alicuota NUMERIC(5, 2);
+
+ALTER TABLE ${schema}.ventas
+  ADD COLUMN IF NOT EXISTS afip_iva_importe NUMERIC(12, 2) NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS ${schema}.venta_items (
   id BIGSERIAL PRIMARY KEY,

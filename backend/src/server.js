@@ -225,6 +225,11 @@ const AFIP_CBTE_TIPO_BY_LETTER = {
   A: 1,
   B: 6
 };
+const AFIP_IVA_ALICUOTAS = [10.5, 21];
+const AFIP_IVA_CONFIG_BY_RATE = {
+  "10.5": { id: 4, rate: 10.5 },
+  "21": { id: 5, rate: 21 }
+};
 
 const ventaItemSchema = z
   .object({
@@ -243,6 +248,7 @@ const ventaCreateSchema = z
   .object({
     tipo: z.enum(VENTA_TIPOS),
     afip_tipo_comprobante: z.enum(AFIP_TIPOS_COMPROBANTE).optional().nullable(),
+    afip_iva_alicuota: z.coerce.number().optional().nullable(),
     cliente_id: z.coerce.number().int().positive().optional().nullable(),
     origen: z.enum(VENTA_ORIGENES),
     orden_id: z.coerce.number().int().positive().optional().nullable(),
@@ -267,6 +273,22 @@ const ventaCreateSchema = z
         path: ["afip_tipo_comprobante"],
         message: "afip_tipo_comprobante es obligatorio cuando tipo es 'afip'"
       });
+    }
+
+    if (data.tipo === "afip") {
+      if (data.afip_iva_alicuota === undefined || data.afip_iva_alicuota === null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["afip_iva_alicuota"],
+          message: "afip_iva_alicuota es obligatorio cuando tipo es 'afip'"
+        });
+      } else if (!AFIP_IVA_ALICUOTAS.includes(Number(data.afip_iva_alicuota))) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["afip_iva_alicuota"],
+          message: "afip_iva_alicuota debe ser 10.5 o 21"
+        });
+      }
     }
   });
 
@@ -314,6 +336,17 @@ const parseAfipDate = (value) => {
     return null;
   }
   return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+};
+
+const roundMoney = (value) => Number(Number(value || 0).toFixed(2));
+
+const resolveAfipIvaConfig = (alicuota) => {
+  const normalized = Number(alicuota);
+  if (!Number.isFinite(normalized)) {
+    return null;
+  }
+
+  return AFIP_IVA_CONFIG_BY_RATE[normalized.toString()] || null;
 };
 
 const resolveAfipDocument = (cliente) => {
@@ -374,7 +407,7 @@ const getAfipClient = () => {
   }
 };
 
-const createAfipVoucher = async ({ total, cliente, afipTipoComprobante }) => {
+const createAfipVoucher = async ({ total, netoGravado, ivaImporte, ivaAlicuota, cliente, afipTipoComprobante }) => {
   const afip = getAfipClient();
   if (!afip) {
     throw new Error("AFIP no esta habilitado (AFIP_ENABLED=false)");
@@ -382,7 +415,9 @@ const createAfipVoucher = async ({ total, cliente, afipTipoComprobante }) => {
 
   const ptoVta = config.afip.puntoVenta;
   const cbteTipo = resolveAfipCbteTipoCode(afipTipoComprobante);
-  const totalRounded = Number(Number(total).toFixed(2));
+  const totalRounded = roundMoney(total);
+  const netoRounded = roundMoney(netoGravado);
+  const ivaRounded = roundMoney(ivaImporte);
   const doc = resolveAfipDocument(cliente);
 
   const billing = afip.ElectronicBilling;
@@ -401,13 +436,28 @@ const createAfipVoucher = async ({ total, cliente, afipTipoComprobante }) => {
     CbteFch: formatAfipDate(),
     ImpTotal: totalRounded,
     ImpTotConc: 0,
-    ImpNeto: totalRounded,
+    ImpNeto: netoRounded,
     ImpOpEx: 0,
-    ImpIVA: 0,
+    ImpIVA: ivaRounded,
     ImpTrib: 0,
     MonId: "PES",
     MonCotiz: 1
   };
+
+  if (ivaRounded > 0) {
+    const ivaConfig = resolveAfipIvaConfig(ivaAlicuota);
+    if (!ivaConfig) {
+      throw new Error("Alicuota de IVA AFIP invalida");
+    }
+
+    request.Iva = [
+      {
+        Id: ivaConfig.id,
+        BaseImp: netoRounded,
+        Importe: ivaRounded
+      }
+    ];
+  }
 
   const response = await billing.createVoucher(request);
 
@@ -1339,6 +1389,8 @@ app.get("/ventas", async (req, res) => {
         v.subtotal,
         v.descuento,
         v.impuestos,
+        v.afip_iva_alicuota,
+        v.afip_iva_importe,
         v.total,
         v.forma_pago,
         v.estado,
@@ -1378,6 +1430,8 @@ app.get("/ventas/:id", async (req, res) => {
         v.subtotal,
         v.descuento,
         v.impuestos,
+        v.afip_iva_alicuota,
+        v.afip_iva_importe,
         v.total,
         v.forma_pago,
         v.estado,
@@ -1485,11 +1539,19 @@ app.post("/ventas", async (req, res) => {
           }
         }
 
-        const totalFinal = subtotalCalculado - body.descuento + body.impuestos;
+        const baseImponible = subtotalCalculado - body.descuento + body.impuestos;
+        const afipIvaConfig = body.tipo === "afip" ? resolveAfipIvaConfig(body.afip_iva_alicuota) : null;
+        const ivaImporte = afipIvaConfig ? roundMoney(baseImponible * (afipIvaConfig.rate / 100)) : 0;
+        const totalFinal = roundMoney(baseImponible + ivaImporte);
 
         if (totalFinal < 0) {
           await client.query("ROLLBACK");
           return { error: { code: 400, message: "Total invalido" } };
+        }
+
+        if (body.tipo === "afip" && !afipIvaConfig) {
+          await client.query("ROLLBACK");
+          return { error: { code: 400, message: "Alicuota de IVA AFIP invalida" } };
         }
 
         const montoPagado = body.monto_pagado ?? totalFinal;
@@ -1514,12 +1576,14 @@ app.post("/ventas", async (req, res) => {
             subtotal,
             descuento,
             impuestos,
+            afip_iva_alicuota,
+            afip_iva_importe,
             total,
             forma_pago,
             estado
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'confirmada')
-          RETURNING id, tipo, cliente_id, origen, orden_id, subtotal, descuento, impuestos, total, forma_pago, estado, fecha
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'confirmada')
+          RETURNING id, tipo, cliente_id, origen, orden_id, subtotal, descuento, impuestos, afip_iva_alicuota, afip_iva_importe, total, forma_pago, estado, fecha
         `;
 
         const ventaResult = await client.query(insertVentaQuery, [
@@ -1530,6 +1594,8 @@ app.post("/ventas", async (req, res) => {
           subtotalCalculado,
           body.descuento,
           body.impuestos,
+          afipIvaConfig ? afipIvaConfig.rate : null,
+          ivaImporte,
           totalFinal,
           body.forma_pago
         ]);
@@ -1629,6 +1695,9 @@ app.post("/ventas", async (req, res) => {
           try {
             const afipVoucher = await createAfipVoucher({
               total: totalFinal,
+              netoGravado: baseImponible,
+              ivaImporte,
+              ivaAlicuota: afipIvaConfig?.rate,
               cliente: clienteFacturacion,
               afipTipoComprobante: body.afip_tipo_comprobante
             });

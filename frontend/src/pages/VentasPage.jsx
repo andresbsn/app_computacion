@@ -220,6 +220,7 @@ function VentasPage() {
   const [form, setForm] = useState({
     tipo: "local",
     afip_tipo_comprobante: "B",
+    afip_iva_alicuota: "21",
     origen: "mostrador",
     cliente_id: "",
     orden_id: "",
@@ -254,6 +255,7 @@ function VentasPage() {
       setForm({
         tipo: "local",
         afip_tipo_comprobante: "B",
+        afip_iva_alicuota: "21",
         origen: "mostrador",
         cliente_id: "",
         orden_id: "",
@@ -271,7 +273,10 @@ function VentasPage() {
   });
 
   const subtotal = form.items.reduce((acc, item) => acc + Number(item.cantidad || 0) * Number(item.precio_unitario || 0), 0);
-  const total = subtotal - Number(form.descuento || 0) + Number(form.impuestos || 0);
+  const baseImponible = subtotal - Number(form.descuento || 0) + Number(form.impuestos || 0);
+  const afipIvaAlicuota = form.tipo === "afip" ? Number(form.afip_iva_alicuota || 0) : 0;
+  const afipIvaImporte = form.tipo === "afip" ? (baseImponible * afipIvaAlicuota) / 100 : 0;
+  const total = baseImponible + afipIvaImporte;
   const isConsumidorFinal = !form.cliente_id;
 
   const clientes = clientesQuery.data || [];
@@ -303,6 +308,7 @@ function VentasPage() {
     setForm({
       tipo: "local",
       afip_tipo_comprobante: "B",
+      afip_iva_alicuota: "21",
       origen: "mostrador",
       cliente_id: "",
       orden_id: "",
@@ -495,6 +501,7 @@ function VentasPage() {
             createMutation.mutate({
               ...form,
               afip_tipo_comprobante: form.tipo === "afip" ? form.afip_tipo_comprobante : null,
+              afip_iva_alicuota: form.tipo === "afip" ? Number(form.afip_iva_alicuota) : null,
               cliente_id: form.cliente_id ? Number(form.cliente_id) : null,
               orden_id: form.orden_id ? Number(form.orden_id) : null,
               descuento: Number(form.descuento || 0),
@@ -517,17 +524,30 @@ function VentasPage() {
             </select>
           </label>
           {form.tipo === "afip" ? (
-            <label>
-              Comprobante AFIP
-              <select
-                value={form.afip_tipo_comprobante}
-                onChange={(e) => setForm({ ...form, afip_tipo_comprobante: e.target.value })}
-                required
-              >
-                <option value="A">Factura A</option>
-                <option value="B">Factura B</option>
-              </select>
-            </label>
+            <>
+              <label>
+                Comprobante AFIP
+                <select
+                  value={form.afip_tipo_comprobante}
+                  onChange={(e) => setForm({ ...form, afip_tipo_comprobante: e.target.value })}
+                  required
+                >
+                  <option value="A">Factura A</option>
+                  <option value="B">Factura B</option>
+                </select>
+              </label>
+              <label>
+                IVA AFIP
+                <select
+                  value={form.afip_iva_alicuota}
+                  onChange={(e) => setForm({ ...form, afip_iva_alicuota: e.target.value })}
+                  required
+                >
+                  <option value="10.5">10.5%</option>
+                  <option value="21">21%</option>
+                </select>
+              </label>
+            </>
           ) : null}
           <label>
             Origen
@@ -703,7 +723,10 @@ function VentasPage() {
               : "Cliente con cuenta corriente: si el monto pagado es menor al total, la diferencia se registra como deuda."}
           </p>
 
-          <p className="status">Subtotal: ${subtotal.toFixed(2)} | Total: ${total.toFixed(2)}</p>
+          <p className="status">
+            Subtotal: ${subtotal.toFixed(2)} | Base imponible: ${baseImponible.toFixed(2)}
+            {form.tipo === "afip" ? ` | IVA ${afipIvaAlicuota.toFixed(1)}%: $${afipIvaImporte.toFixed(2)}` : ""} | Total: ${total.toFixed(2)}
+          </p>
           <button type="submit" disabled={createMutation.isPending}>
             Confirmar venta
           </button>
@@ -731,6 +754,9 @@ function VentasPage() {
                 <p><b>Cliente:</b> {ventaDetalle.cliente_nombre || "-"}</p>
                 <p><b>Forma pago:</b> {ventaDetalle.forma_pago}</p>
                 <p><b>Subtotal:</b> ${Number(ventaDetalle.subtotal).toFixed(2)}</p>
+                {ventaDetalle.tipo === "afip" && ventaDetalle.afip_iva_alicuota ? (
+                  <p><b>IVA ({Number(ventaDetalle.afip_iva_alicuota).toFixed(1)}%):</b> ${Number(ventaDetalle.afip_iva_importe || 0).toFixed(2)}</p>
+                ) : null}
                 <p><b>Total:</b> ${Number(ventaDetalle.total).toFixed(2)}</p>
               </section>
               <section className="card">
