@@ -1,6 +1,10 @@
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 
-dotenv.config();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
 const toNumber = (value, fallback) => {
   const parsed = Number(value);
@@ -15,6 +19,7 @@ export const config = {
     enabled: process.env.AFIP_ENABLED === "true",
     cuit: process.env.AFIP_CUIT || "",
     production: process.env.AFIP_PRODUCTION === "true",
+    useSoapService: process.env.AFIP_USE_SOAP_SERVICE === "true",
     puntoVenta: toNumber(process.env.AFIP_PTO_VTA, 1),
     cbteTipo: toNumber(process.env.AFIP_CBTE_TIPO, 11),
     certPath: process.env.AFIP_CERT_PATH || "./credenciales/CGEELECTRONICA.crt",

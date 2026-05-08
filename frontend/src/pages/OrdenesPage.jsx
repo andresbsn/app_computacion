@@ -87,6 +87,7 @@ const escapeHtml = (value) =>
 const formatOrderNumber = (value) => `#${String(value ?? "-").padStart(7, "0")}`;
 
 const roundMoney = (value) => Number(Number(value || 0).toFixed(2));
+const normalizeDigits = (value) => String(value ?? "").replace(/\D/g, "");
 
 const printWhenReady = (printWindow) => {
   let didPrint = false;
@@ -652,6 +653,9 @@ function OrdenesPage() {
 
   const facturarOrdenMutation = useMutation({
     mutationFn: ({ payload }) => api.ventas.create(payload),
+    onError: (error) => {
+      setFacturaError(error.message || "No se pudo generar la factura.");
+    },
     onSuccess: (venta, variables) => {
       queryClient.invalidateQueries({ queryKey: ["ventas"] });
       setIsFacturaOpen(false);
@@ -1419,6 +1423,14 @@ function OrdenesPage() {
           <form
             onSubmit={(e) => {
               e.preventDefault();
+
+              if (facturaForm.tipo === "afip") {
+                const clienteCuit = normalizeDigits(facturaOrden?.cliente_cuit);
+                if (clienteCuit.length !== 11) {
+                  setFacturaError("El cliente de la orden no tiene CUIT valido. Actualice el cliente antes de facturar AFIP.");
+                  return;
+                }
+              }
 
               if (facturaItemsPreview.length === 0) {
                 setFacturaError("Debe cargar items manuales o usar movimientos automaticos con contenido.");
