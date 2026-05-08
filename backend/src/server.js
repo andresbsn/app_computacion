@@ -1539,10 +1539,24 @@ app.post("/ventas", async (req, res) => {
           }
         }
 
-        const baseImponible = subtotalCalculado - body.descuento + body.impuestos;
+        const baseCalculada = subtotalCalculado - body.descuento + body.impuestos;
         const afipIvaConfig = body.tipo === "afip" ? resolveAfipIvaConfig(body.afip_iva_alicuota) : null;
-        const ivaImporte = afipIvaConfig ? roundMoney(baseImponible * (afipIvaConfig.rate / 100)) : 0;
-        const totalFinal = roundMoney(baseImponible + ivaImporte);
+
+        let totalFinal = roundMoney(baseCalculada);
+        let baseImponible = roundMoney(baseCalculada);
+        let ivaImporte = 0;
+
+        if (afipIvaConfig) {
+          if (body.origen === "orden") {
+            totalFinal = roundMoney(baseCalculada);
+            ivaImporte = roundMoney(totalFinal * (afipIvaConfig.rate / (100 + afipIvaConfig.rate)));
+            baseImponible = roundMoney(totalFinal - ivaImporte);
+          } else {
+            baseImponible = roundMoney(baseCalculada);
+            ivaImporte = roundMoney(baseImponible * (afipIvaConfig.rate / 100));
+            totalFinal = roundMoney(baseImponible + ivaImporte);
+          }
+        }
 
         if (totalFinal < 0) {
           await client.query("ROLLBACK");

@@ -46,6 +46,7 @@ const initialMov = {
 const initialFacturaForm = {
   tipo: "local",
   afip_tipo_comprobante: "B",
+  afip_iva_alicuota: "21",
   forma_pago: "efectivo",
   modo_detalle: "manual",
   manual_item_descripcion: "",
@@ -84,6 +85,8 @@ const escapeHtml = (value) =>
     .replace(/'/g, "&#039;");
 
 const formatOrderNumber = (value) => `#${String(value ?? "-").padStart(7, "0")}`;
+
+const roundMoney = (value) => Number(Number(value || 0).toFixed(2));
 
 const printWhenReady = (printWindow) => {
   let didPrint = false;
@@ -748,6 +751,28 @@ function OrdenesPage() {
     [facturaItemsPreview]
   );
 
+  const afipFacturaPreview = useMemo(() => {
+    if (facturaForm.tipo !== "afip") {
+      return null;
+    }
+
+    const alicuota = Number(facturaForm.afip_iva_alicuota || 0);
+    if (!Number.isFinite(alicuota) || alicuota <= 0) {
+      return null;
+    }
+
+    const total = Number(facturaTotalPreview || 0);
+    const iva = total * (alicuota / (100 + alicuota));
+    const neto = total - iva;
+
+    return {
+      alicuota,
+      total: roundMoney(total),
+      iva: roundMoney(iva),
+      neto: roundMoney(neto)
+    };
+  }, [facturaForm.tipo, facturaForm.afip_iva_alicuota, facturaTotalPreview]);
+
   const selectedCliente = useMemo(() => clientes.find((c) => String(c.id) === String(ordenForm.cliente_id)), [clientes, ordenForm.cliente_id]);
 
   const openCreate = () => {
@@ -1406,6 +1431,7 @@ function OrdenesPage() {
                 payload: {
                   tipo: facturaForm.tipo,
                   afip_tipo_comprobante: facturaForm.tipo === "afip" ? facturaForm.afip_tipo_comprobante : null,
+                  afip_iva_alicuota: facturaForm.tipo === "afip" ? Number(facturaForm.afip_iva_alicuota) : null,
                   origen: "orden",
                   orden_id: Number(facturaOrden.id),
                   cliente_id: Number(facturaOrden.cliente_id),
@@ -1434,16 +1460,28 @@ function OrdenesPage() {
                   </select>
                 </label>
                 {facturaForm.tipo === "afip" ? (
-                  <label>
-                    Comprobante AFIP
-                    <select
-                      value={facturaForm.afip_tipo_comprobante}
-                      onChange={(e) => setFacturaForm({ ...facturaForm, afip_tipo_comprobante: e.target.value })}
-                    >
-                      <option value="A">Factura A</option>
-                      <option value="B">Factura B</option>
-                    </select>
-                  </label>
+                  <>
+                    <label>
+                      Comprobante AFIP
+                      <select
+                        value={facturaForm.afip_tipo_comprobante}
+                        onChange={(e) => setFacturaForm({ ...facturaForm, afip_tipo_comprobante: e.target.value })}
+                      >
+                        <option value="A">Factura A</option>
+                        <option value="B">Factura B</option>
+                      </select>
+                    </label>
+                    <label>
+                      IVA AFIP
+                      <select
+                        value={facturaForm.afip_iva_alicuota}
+                        onChange={(e) => setFacturaForm({ ...facturaForm, afip_iva_alicuota: e.target.value })}
+                      >
+                        <option value="10.5">10.5%</option>
+                        <option value="21">21%</option>
+                      </select>
+                    </label>
+                  </>
                 ) : null}
                 <label>
                   Forma de pago
@@ -1615,6 +1653,15 @@ function OrdenesPage() {
               <p className="status">
                 Total calculado: ${facturaTotalPreview.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
+              {afipFacturaPreview ? (
+                <p className="status">
+                  Neto gravado: ${afipFacturaPreview.neto.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} -
+                  IVA ({afipFacturaPreview.alicuota}%):
+                  ${afipFacturaPreview.iva.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} -
+                  Total AFIP:
+                  ${afipFacturaPreview.total.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+              ) : null}
             </section>
 
             <button type="submit" className="secondary" disabled={facturarOrdenMutation.isPending}>
