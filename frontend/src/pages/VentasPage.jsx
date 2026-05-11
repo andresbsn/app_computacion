@@ -18,6 +18,31 @@ const escapeHtml = (value) =>
     .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#039;");
 
+const normalizeAfipComprobanteTipo = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+
+  if (normalized === "A" || normalized === "B") {
+    return normalized;
+  }
+
+  return null;
+};
+
+const resolveAfipComprobanteLabel = (value) => {
+  const tipo = normalizeAfipComprobanteTipo(value);
+  if (tipo === "A") {
+    return "FACTURA A";
+  }
+
+  if (tipo === "B") {
+    return "FACTURA B";
+  }
+
+  return "FACTURA AFIP";
+};
+
 const printWhenReady = (printWindow) => {
   let didPrint = false;
 
@@ -70,6 +95,8 @@ const renderAndPrintVentaComprobante = (venta) => {
   const comprobanteNumero = venta?.comprobante_numero || "-";
   const tipoComprobante = (venta?.tipo || "").toString().toLowerCase();
   const isAfip = tipoComprobante === "afip" || comprobanteNumero.toUpperCase().startsWith("AFIP");
+  const afipTipo = normalizeAfipComprobanteTipo(venta?.afip_tipo_comprobante);
+  const comprobanteLabel = isAfip ? resolveAfipComprobanteLabel(afipTipo) : "Comprobante de venta";
   const emisorNombre = isAfip ? AFIP_ISSUER_NAME : "CGE Computacion";
   const items = venta?.items || [];
   const subtotalCalculado = items.reduce((acc, item) => acc + Number(item.cantidad || 0) * Number(item.precio_unitario || 0), 0);
@@ -132,7 +159,7 @@ const renderAndPrintVentaComprobante = (venta) => {
             <img src="${logoCge}" alt="Logo CGE Computacion" />
             <div>
               <h1>${escapeHtml(emisorNombre)}</h1>
-              <p class="muted">Comprobante de venta</p>
+              <p class="muted">${escapeHtml(comprobanteLabel)}</p>
             </div>
           </div>
           <div>
@@ -336,7 +363,9 @@ function VentasPage() {
         queryFn: () => api.ventas.getById(ventaId)
       });
 
-      if (ventaDetalleCompleto?.origen === "orden") {
+      const esOrdenConFacturaLocal = ventaDetalleCompleto?.origen === "orden" && String(ventaDetalleCompleto?.tipo || "").toLowerCase() !== "afip";
+
+      if (esOrdenConFacturaLocal) {
         const technicalReportHtml = await api.ventas.getTechnicalReportHtml(ventaId);
         renderAndPrintRawHtml(technicalReportHtml);
         return;

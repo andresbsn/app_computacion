@@ -81,8 +81,33 @@ const escapeHtml = (value) =>
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
+    .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+
+const normalizeAfipComprobanteTipo = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+
+  if (normalized === "A" || normalized === "B") {
+    return normalized;
+  }
+
+  return null;
+};
+
+const resolveAfipComprobanteLabel = (value) => {
+  const tipo = normalizeAfipComprobanteTipo(value);
+  if (tipo === "A") {
+    return "FACTURA A";
+  }
+
+  if (tipo === "B") {
+    return "FACTURA B";
+  }
+
+  return "FACTURA AFIP";
+};
 
 const formatOrderNumber = (value) => `#${String(value ?? "-").padStart(7, "0")}`;
 
@@ -322,6 +347,158 @@ const renderAndPrintOrden = (orden) => {
 const renderAndPrintFactura = ({ venta, orden, items }) => {
   const printWindow = window.open("", "_blank", "width=900,height=780");
   if (!printWindow) {
+    return;
+  }
+
+  const isAfip = String(venta?.tipo || "").toLowerCase() === "afip";
+
+  if (isAfip) {
+    const afipTipo = normalizeAfipComprobanteTipo(venta?.afip_tipo_comprobante || venta?.comprobante?.afip_tipo_comprobante) || "B";
+    const comprobanteLabel = resolveAfipComprobanteLabel(afipTipo);
+    const comprobanteNumero = venta?.comprobante?.numero || venta?.comprobante_numero || "-";
+    const cae = venta?.comprobante?.cae || venta?.cae || "-";
+    const caeVto = venta?.comprobante?.cae_vto || venta?.cae_vto || null;
+    const subtotal = Number(venta?.subtotal ?? venta?.total ?? 0);
+    const ivaImporte = Number(venta?.afip_iva_importe || 0);
+    const totalAfip = Number(venta?.total || 0);
+    const clienteCuit = orden?.cliente_cuit || "-";
+    const clienteCondicionIva = orden?.cliente_condicion_iva || "-";
+    const afipItemsRows = (items || []).length
+      ? (items || [])
+          .map(
+            (item) => `
+              <tr>
+                <td>${escapeHtml(item?.descripcion || "-")}</td>
+                <td style="text-align:right;">${Number(item?.cantidad || 0).toFixed(2)}</td>
+                <td style="text-align:right;">$${Number(item?.precio_unitario || 0).toFixed(2)}</td>
+                <td style="text-align:right;">$${Number(item?.subtotal ?? Number(item?.cantidad || 0) * Number(item?.precio_unitario || 0)).toFixed(2)}</td>
+              </tr>
+            `
+          )
+          .join("")
+      : '<tr><td colspan="4" style="text-align:center;">Sin ítems.</td></tr>';
+
+    const afipHtml = `
+      <!DOCTYPE html>
+      <html lang="es">
+        <head>
+          <meta charset="UTF-8" />
+          <title>${escapeHtml(comprobanteLabel)} ${escapeHtml(comprobanteNumero)}</title>
+          <style>
+            * { box-sizing: border-box; }
+            body { font-family: Arial, sans-serif; margin: 0; padding: 18px; background: #f3f4f6; color: #111827; }
+            .sheet { max-width: 860px; margin: 0 auto; background: #fff; border: 1px solid #1f2937; }
+            .header { display: grid; grid-template-columns: 1fr 220px; border-bottom: 1px solid #1f2937; }
+            .header-left { padding: 14px; border-right: 1px solid #1f2937; }
+            .header-right { padding: 14px; text-align: center; }
+            .brand { display: flex; gap: 10px; align-items: flex-start; }
+            .brand img { width: 88px; height: 88px; object-fit: contain; border: 1px solid #d1d5db; }
+            .brand h1 { margin: 0 0 4px; font-size: 22px; font-weight: 800; }
+            .muted { margin: 2px 0; font-size: 12px; color: #374151; }
+            .letter { border: 2px solid #111827; width: 46px; height: 46px; line-height: 42px; font-size: 28px; font-weight: 900; margin: 0 auto 8px; }
+            .title { margin: 0; font-size: 20px; font-weight: 800; }
+            .subtle { margin: 4px 0 0; font-size: 12px; }
+            .section { padding: 12px 14px; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { border: 1px solid #d1d5db; padding: 7px; font-size: 12px; }
+            th { background: #f9fafb; text-align: left; }
+            .totals { width: 320px; margin-left: auto; margin-top: 10px; }
+            .totals td { font-size: 13px; }
+            .totals .final td { background: #111827; color: #fff; font-weight: 800; }
+            .cae { margin-top: 12px; border: 1px solid #d1d5db; padding: 8px; background: #f9fafb; font-size: 12px; }
+            @media print {
+              body { background: #fff; padding: 0; }
+              .sheet { max-width: 100%; border: none; }
+            }
+          </style>
+        </head>
+        <body>
+          <section class="sheet">
+            <header class="header">
+              <div class="header-left">
+                <div class="brand">
+                  <img src="${logoCge}" alt="Logo ${escapeHtml(WORKSHOP_COMPANY_NAME)}" />
+                  <div>
+                    <h1>${escapeHtml(WORKSHOP_COMPANY_NAME)}</h1>
+                    <p class="muted">${escapeHtml(AFIP_ISSUER_NAME)}</p>
+                    <p class="muted">${escapeHtml(WORKSHOP_COMPANY_ADDRESS)}</p>
+                    <p class="muted">Tel: ${escapeHtml(WORKSHOP_COMPANY_PHONE)}</p>
+                  </div>
+                </div>
+              </div>
+              <div class="header-right">
+                <div class="letter">${escapeHtml(afipTipo)}</div>
+                <h2 class="title">${escapeHtml(comprobanteLabel)}</h2>
+                <p class="subtle"><b>Número:</b> ${escapeHtml(comprobanteNumero)}</p>
+                <p class="subtle"><b>Fecha:</b> ${escapeHtml(dayjs(venta?.fecha || new Date()).format("DD/MM/YYYY HH:mm"))}</p>
+              </div>
+            </header>
+
+            <section class="section">
+              <table>
+                <tbody>
+                  <tr>
+                    <td><b>Cliente</b></td>
+                    <td>${escapeHtml(orden?.cliente_nombre || "Consumidor final")}</td>
+                    <td><b>CUIT</b></td>
+                    <td>${escapeHtml(clienteCuit)}</td>
+                  </tr>
+                  <tr>
+                    <td><b>Documento</b></td>
+                    <td>${escapeHtml(orden?.cliente_documento || "-")}</td>
+                    <td><b>Condición IVA</b></td>
+                    <td>${escapeHtml(clienteCondicionIva)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+
+            <section class="section">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Descripción</th>
+                    <th style="text-align:right;">Cant.</th>
+                    <th style="text-align:right;">Precio unit.</th>
+                    <th style="text-align:right;">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${afipItemsRows}
+                </tbody>
+              </table>
+
+              <table class="totals">
+                <tbody>
+                  <tr>
+                    <td><b>Subtotal</b></td>
+                    <td style="text-align:right;">$${subtotal.toFixed(2)}</td>
+                  </tr>
+                  <tr>
+                    <td><b>IVA (${Number(venta?.afip_iva_alicuota || 0).toFixed(1)}%)</b></td>
+                    <td style="text-align:right;">$${ivaImporte.toFixed(2)}</td>
+                  </tr>
+                  <tr class="final">
+                    <td><b>TOTAL</b></td>
+                    <td style="text-align:right;"><b>$${totalAfip.toFixed(2)}</b></td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div class="cae">
+                <p class="muted" style="margin: 0;"><b>CAE:</b> ${escapeHtml(cae)}</p>
+                <p class="muted" style="margin: 3px 0 0;"><b>Vto. CAE:</b> ${escapeHtml(caeVto ? dayjs(caeVto).format("DD/MM/YYYY") : "-")}</p>
+              </div>
+            </section>
+          </section>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.open();
+    printWindow.document.write(afipHtml);
+    printWindow.document.close();
+    printWhenReady(printWindow);
     return;
   }
 
@@ -663,7 +840,10 @@ function OrdenesPage() {
       setFacturaError("");
 
       const facturaData = {
-        venta,
+        venta: {
+          ...venta,
+          afip_tipo_comprobante: venta?.afip_tipo_comprobante || variables?.payload?.afip_tipo_comprobante || null
+        },
         orden: variables.ordenSnapshot,
         items: variables.itemsSnapshot
       };

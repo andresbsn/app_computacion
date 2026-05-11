@@ -721,6 +721,39 @@ const formatDateOnly = (value) => {
   return DATE_FORMATTER.format(new Date(value));
 };
 
+const formatDateTime = (value) => {
+  if (!value) {
+    return "-";
+  }
+
+  return DATE_TIME_FORMATTER.format(new Date(value));
+};
+
+const normalizeComprobanteAfipTipo = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+
+  if (normalized === "A" || normalized === "B") {
+    return normalized;
+  }
+
+  return null;
+};
+
+const resolveAfipComprobanteLabel = (value) => {
+  const type = normalizeComprobanteAfipTipo(value);
+  if (type === "A") {
+    return "FACTURA A";
+  }
+
+  if (type === "B") {
+    return "FACTURA B";
+  }
+
+  return "FACTURA AFIP";
+};
+
 const escapePdfText = (value) =>
   String(value ?? "")
     .replace(/\\/g, "\\\\")
@@ -1010,16 +1043,162 @@ const buildTechnicalReportHtml = ({ venta, comprobante, orden, cliente, total, d
   </html>
 `;
 
+const buildAfipInvoiceHtml = ({ venta, comprobante, cliente, itemsFacturados = [] }) => {
+  const afipTipo = normalizeComprobanteAfipTipo(comprobante.afip_tipo_comprobante);
+  const comprobanteLabel = resolveAfipComprobanteLabel(afipTipo);
+  const subtotal = Number(venta.subtotal || venta.total || 0);
+  const ivaImporte = Number(venta.afip_iva_importe || 0);
+  const total = Number(venta.total || 0);
+
+  const itemsRows = itemsFacturados.length
+    ? itemsFacturados
+        .map(
+          (item) => `
+            <tr>
+              <td>${escapeHtml(item.descripcion || "-")}</td>
+              <td style="text-align:right;">${escapeHtml(Number(item.cantidad || 0).toFixed(2))}</td>
+              <td style="text-align:right;">${escapeHtml(formatCurrency(item.precio_unitario || 0))}</td>
+              <td style="text-align:right;">${escapeHtml(formatCurrency(item.subtotal || 0))}</td>
+            </tr>
+          `
+        )
+        .join("")
+    : '<tr><td colspan="4" style="text-align:center;">Sin ítems.</td></tr>';
+
+  return `
+    <!DOCTYPE html>
+    <html lang="es">
+      <head>
+        <meta charset="UTF-8" />
+        <title>${escapeHtml(comprobanteLabel)} ${escapeHtml(comprobante.numero || "-")}</title>
+        <style>
+          * { box-sizing: border-box; }
+          body { font-family: Arial, sans-serif; margin: 0; padding: 18px; background: #f3f4f6; color: #111827; }
+          .sheet { max-width: 860px; margin: 0 auto; background: #fff; border: 1px solid #1f2937; }
+          .header { display: grid; grid-template-columns: 1fr 220px; border-bottom: 1px solid #1f2937; }
+          .header-left { padding: 14px; border-right: 1px solid #1f2937; }
+          .header-right { padding: 14px; text-align: center; }
+          .brand { display: flex; gap: 10px; align-items: flex-start; }
+          .brand img { width: 88px; height: 88px; object-fit: contain; border: 1px solid #d1d5db; }
+          .brand h1 { margin: 0 0 4px; font-size: 22px; font-weight: 800; }
+          .muted { margin: 2px 0; font-size: 12px; color: #374151; }
+          .letter { border: 2px solid #111827; width: 46px; height: 46px; line-height: 42px; font-size: 28px; font-weight: 900; margin: 0 auto 8px; }
+          .title { margin: 0; font-size: 20px; font-weight: 800; }
+          .subtle { margin: 4px 0 0; font-size: 12px; }
+          .section { padding: 12px 14px; }
+          table { width: 100%; border-collapse: collapse; }
+          th, td { border: 1px solid #d1d5db; padding: 7px; font-size: 12px; }
+          th { background: #f9fafb; text-align: left; }
+          .totals { width: 320px; margin-left: auto; margin-top: 10px; }
+          .totals td { font-size: 13px; }
+          .totals .final td { background: #111827; color: #fff; font-weight: 800; }
+          .cae { margin-top: 12px; border: 1px solid #d1d5db; padding: 8px; background: #f9fafb; font-size: 12px; }
+          @media print {
+            body { background: #fff; padding: 0; }
+            .sheet { max-width: 100%; border: none; }
+          }
+        </style>
+      </head>
+      <body>
+        <section class="sheet">
+          <header class="header">
+            <div class="header-left">
+              <div class="brand">
+                ${workshopLogoDataUri ? `<img src="${workshopLogoDataUri}" alt="Logo ${escapeHtml(config.workshop.companyName)}" />` : ""}
+                <div>
+                  <h1>${escapeHtml(config.workshop.companyName)}</h1>
+                  <p class="muted">${escapeHtml(config.workshop.ownerName)}</p>
+                  <p class="muted">${escapeHtml(config.workshop.address)}</p>
+                  <p class="muted">CUIT emisor: ${escapeHtml(config.afip.cuit)}</p>
+                </div>
+              </div>
+            </div>
+            <div class="header-right">
+              <div class="letter">${escapeHtml(afipTipo || "C")}</div>
+              <h2 class="title">${escapeHtml(comprobanteLabel)}</h2>
+              <p class="subtle"><b>Número:</b> ${escapeHtml(comprobante.numero || "-")}</p>
+              <p class="subtle"><b>Fecha:</b> ${escapeHtml(formatDateTime(comprobante.fecha_emision || venta.fecha))}</p>
+            </div>
+          </header>
+
+          <section class="section">
+            <table>
+              <tbody>
+                <tr>
+                  <td><b>Cliente</b></td>
+                  <td>${escapeHtml(cliente.nombre || "Consumidor final")}</td>
+                  <td><b>CUIT</b></td>
+                  <td>${escapeHtml(cliente.cuit || "-")}</td>
+                </tr>
+                <tr>
+                  <td><b>Documento</b></td>
+                  <td>${escapeHtml(cliente.documento || "-")}</td>
+                  <td><b>Condición IVA</b></td>
+                  <td>${escapeHtml(cliente.condicion_iva || "-")}</td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="section">
+            <table>
+              <thead>
+                <tr>
+                  <th>Descripción</th>
+                  <th style="text-align:right;">Cant.</th>
+                  <th style="text-align:right;">Precio unit.</th>
+                  <th style="text-align:right;">Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemsRows}
+              </tbody>
+            </table>
+
+            <table class="totals">
+              <tbody>
+                <tr>
+                  <td><b>Subtotal</b></td>
+                  <td style="text-align:right;">${escapeHtml(formatCurrency(subtotal))}</td>
+                </tr>
+                <tr>
+                  <td><b>IVA (${escapeHtml(Number(venta.afip_iva_alicuota || 0).toFixed(1))}%)</b></td>
+                  <td style="text-align:right;">${escapeHtml(formatCurrency(ivaImporte))}</td>
+                </tr>
+                <tr class="final">
+                  <td><b>TOTAL</b></td>
+                  <td style="text-align:right;"><b>${escapeHtml(formatCurrency(total))}</b></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="cae">
+              <p class="muted" style="margin: 0;"><b>CAE:</b> ${escapeHtml(comprobante.cae || "-")}</p>
+              <p class="muted" style="margin: 3px 0 0;"><b>Vto. CAE:</b> ${escapeHtml(formatDateOnly(comprobante.cae_vto))}</p>
+            </div>
+          </section>
+        </section>
+      </body>
+    </html>
+  `;
+};
+
 const getTechnicalReportContext = async (ventaId) => {
   const ventaResult = await pool.query(
     `
       SELECT
         v.id,
         v.fecha,
+        v.subtotal,
+        v.afip_iva_alicuota,
+        v.afip_iva_importe,
         v.total,
         cb.numero AS comprobante_numero,
         cb.tipo AS comprobante_tipo,
         cb.fecha_emision AS comprobante_fecha,
+        cb.cae AS comprobante_cae,
+        cb.cae_vto AS comprobante_cae_vto,
+        cb.raw_respuesta_afip::jsonb ->> 'tipo_comprobante' AS comprobante_afip_tipo,
         o.id AS orden_id,
         o.nro_orden,
         o.estado_actual,
@@ -1029,7 +1208,9 @@ const getTechnicalReportContext = async (ventaId) => {
         c.nombre AS cliente_nombre,
         c.telefono AS cliente_telefono,
         c.email AS cliente_email,
-        c.documento AS cliente_documento
+        c.documento AS cliente_documento,
+        c.cuit AS cliente_cuit,
+        c.condicion_iva AS cliente_condicion_iva
       FROM ${schema}.ventas v
       JOIN ${schema}.ordenes_reparacion o ON o.id = v.orden_id
       LEFT JOIN ${schema}.clientes c ON c.id = o.cliente_id
@@ -1047,7 +1228,7 @@ const getTechnicalReportContext = async (ventaId) => {
 
   const detalleItemsResult = await pool.query(
     `
-      SELECT descripcion
+      SELECT descripcion, cantidad, precio_unitario, subtotal
       FROM ${schema}.venta_items
       WHERE venta_id = $1
       ORDER BY id ASC
@@ -1059,17 +1240,30 @@ const getTechnicalReportContext = async (ventaId) => {
     .map((item) => String(item.descripcion || "").trim())
     .filter((detalle) => detalle.length > 0);
 
+  const itemsFacturados = detalleItemsResult.rows.map((item) => ({
+    descripcion: item.descripcion || "-",
+    cantidad: Number(item.cantidad || 0),
+    precio_unitario: Number(item.precio_unitario || 0),
+    subtotal: Number(item.subtotal || 0)
+  }));
+
   const row = ventaResult.rows[0];
   return {
     venta: {
       id: row.id,
       fecha: row.fecha,
+      subtotal: Number(row.subtotal || 0),
+      afip_iva_alicuota: row.afip_iva_alicuota,
+      afip_iva_importe: Number(row.afip_iva_importe || 0),
       total: Number(row.total || 0)
     },
     comprobante: {
       numero: row.comprobante_numero || `VTA-${row.id}`,
       tipo: row.comprobante_tipo || "local",
-      fecha_emision: row.comprobante_fecha || row.fecha
+      fecha_emision: row.comprobante_fecha || row.fecha,
+      cae: row.comprobante_cae || null,
+      cae_vto: row.comprobante_cae_vto || null,
+      afip_tipo_comprobante: normalizeComprobanteAfipTipo(row.comprobante_afip_tipo)
     },
     orden: {
       id: row.orden_id,
@@ -1083,9 +1277,12 @@ const getTechnicalReportContext = async (ventaId) => {
       nombre: row.cliente_nombre || "Cliente",
       telefono: row.cliente_telefono,
       email: row.cliente_email,
-      documento: row.cliente_documento
+      documento: row.cliente_documento,
+      cuit: row.cliente_cuit,
+      condicion_iva: row.cliente_condicion_iva
     },
-    detalle_facturado: detalleFacturado
+    detalle_facturado: detalleFacturado,
+    items_facturados: itemsFacturados
   };
 };
 
@@ -1097,6 +1294,35 @@ const sendTechnicalReportEmail = async (report) => {
   const transporter = getSmtpTransporter();
   if (!transporter || !config.smtp.from) {
     return { sent: false, reason: "smtp_no_configurado" };
+  }
+
+  const isAfipComprobante = String(report?.comprobante?.tipo || "").toLowerCase() === "afip" && Boolean(report?.comprobante?.cae);
+
+  if (isAfipComprobante) {
+    const html = buildAfipInvoiceHtml({
+      venta: report.venta,
+      comprobante: report.comprobante,
+      cliente: report.cliente,
+      itemsFacturados: report.items_facturados
+    });
+    const comprobanteLabel = resolveAfipComprobanteLabel(report.comprobante.afip_tipo_comprobante);
+
+    await transporter.sendMail({
+      from: config.smtp.from,
+      to: report.cliente.email,
+      subject: `${comprobanteLabel} ${report.comprobante.numero} - Orden ${report.orden.nro_orden}`,
+      text: `Adjuntamos su ${comprobanteLabel} ${report.comprobante.numero}. Total: ${formatCurrency(report.venta.total)}.`,
+      html,
+      attachments: [
+        {
+          filename: `factura-afip-${report.comprobante.numero || report.venta.id}.html`,
+          content: html,
+          contentType: "text/html; charset=utf-8"
+        }
+      ]
+    });
+
+    return { sent: true, to: report.cliente.email, document_type: "factura_afip" };
   }
 
   const html = `
@@ -1129,7 +1355,7 @@ const sendTechnicalReportEmail = async (report) => {
     ]
   });
 
-  return { sent: true, to: report.cliente.email };
+  return { sent: true, to: report.cliente.email, document_type: "informe_tecnico" };
 };
 
 const handleZodError = (error, res) => {
@@ -1806,6 +2032,7 @@ app.get("/ventas/:id", async (req, res) => {
         cb.numero AS comprobante_numero,
         cb.cae,
         cb.cae_vto,
+        cb.raw_respuesta_afip::jsonb ->> 'tipo_comprobante' AS afip_tipo_comprobante,
         cb.fecha_emision
       FROM ${schema}.ventas v
       LEFT JOIN ${schema}.clientes c ON c.id = v.cliente_id
