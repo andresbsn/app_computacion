@@ -352,298 +352,153 @@ const renderAndPrintFactura = ({ venta, orden, items }) => {
 
   const isAfip = String(venta?.tipo || "").toLowerCase() === "afip";
 
-  if (isAfip) {
-    const afipTipo = normalizeAfipComprobanteTipo(venta?.afip_tipo_comprobante || venta?.comprobante?.afip_tipo_comprobante) || "B";
-    const comprobanteLabel = resolveAfipComprobanteLabel(afipTipo);
-    const comprobanteNumero = venta?.comprobante?.numero || venta?.comprobante_numero || "-";
-    const cae = venta?.comprobante?.cae || venta?.cae || "-";
-    const caeVto = venta?.comprobante?.cae_vto || venta?.cae_vto || null;
-    const subtotal = Number(venta?.subtotal ?? venta?.total ?? 0);
-    const ivaImporte = Number(venta?.afip_iva_importe || 0);
-    const totalAfip = Number(venta?.total || 0);
-    const clienteCuit = orden?.cliente_cuit || "-";
-    const clienteCondicionIva = orden?.cliente_condicion_iva || "-";
-    const afipItemsRows = (items || []).length
-      ? (items || [])
-          .map(
-            (item) => `
-              <tr>
-                <td>${escapeHtml(item?.descripcion || "-")}</td>
-                <td style="text-align:right;">${Number(item?.cantidad || 0).toFixed(2)}</td>
-                <td style="text-align:right;">$${Number(item?.precio_unitario || 0).toFixed(2)}</td>
-                <td style="text-align:right;">$${Number(item?.subtotal ?? Number(item?.cantidad || 0) * Number(item?.precio_unitario || 0)).toFixed(2)}</td>
-              </tr>
-            `
-          )
-          .join("")
-      : '<tr><td colspan="4" style="text-align:center;">Sin ítems.</td></tr>';
+  const facturaTipo = isAfip
+    ? normalizeAfipComprobanteTipo(venta?.afip_tipo_comprobante || venta?.comprobante?.afip_tipo_comprobante) || "B"
+    : "X";
+  const comprobanteLabel = isAfip ? resolveAfipComprobanteLabel(facturaTipo) : "FACTURA LOCAL";
+  const comprobanteNumero = venta?.comprobante?.numero || venta?.comprobante_numero || `LOCAL-${venta?.id || "-"}`;
+  const cae = isAfip ? venta?.comprobante?.cae || venta?.cae || "-" : "No corresponde";
+  const caeVto = isAfip ? venta?.comprobante?.cae_vto || venta?.cae_vto || null : null;
+  const subtotal = Number(venta?.subtotal ?? venta?.total ?? 0);
+  const ivaAlicuota = isAfip ? Number(venta?.afip_iva_alicuota || 0) : 0;
+  const ivaImporte = isAfip ? Number(venta?.afip_iva_importe || 0) : 0;
+  const total = Number(venta?.total ?? subtotal + ivaImporte);
+  const clienteCuit = orden?.cliente_cuit || "-";
+  const clienteCondicionIva = orden?.cliente_condicion_iva || "-";
+  const rows = (items || []).length
+    ? (items || [])
+        .map(
+          (item) => `
+            <tr>
+              <td>${escapeHtml(item?.descripcion || "-")}</td>
+              <td style="text-align:right;">${Number(item?.cantidad || 0).toFixed(2)}</td>
+              <td style="text-align:right;">$${Number(item?.precio_unitario || 0).toFixed(2)}</td>
+              <td style="text-align:right;">$${Number(item?.subtotal ?? Number(item?.cantidad || 0) * Number(item?.precio_unitario || 0)).toFixed(2)}</td>
+            </tr>
+          `
+        )
+        .join("")
+    : '<tr><td colspan="4" style="text-align:center;">Sin ítems.</td></tr>';
 
-    const afipHtml = `
-      <!DOCTYPE html>
-      <html lang="es">
-        <head>
-          <meta charset="UTF-8" />
-          <title>${escapeHtml(comprobanteLabel)} ${escapeHtml(comprobanteNumero)}</title>
-          <style>
-            * { box-sizing: border-box; }
-            body { font-family: Arial, sans-serif; margin: 0; padding: 18px; background: #f3f4f6; color: #111827; }
-            .sheet { max-width: 860px; margin: 0 auto; background: #fff; border: 1px solid #1f2937; }
-            .header { display: grid; grid-template-columns: 1fr 220px; border-bottom: 1px solid #1f2937; }
-            .header-left { padding: 14px; border-right: 1px solid #1f2937; }
-            .header-right { padding: 14px; text-align: center; }
-            .brand { display: flex; gap: 10px; align-items: flex-start; }
-            .brand img { width: 88px; height: 88px; object-fit: contain; border: 1px solid #d1d5db; }
-            .brand h1 { margin: 0 0 4px; font-size: 22px; font-weight: 800; }
-            .muted { margin: 2px 0; font-size: 12px; color: #374151; }
-            .letter { border: 2px solid #111827; width: 46px; height: 46px; line-height: 42px; font-size: 28px; font-weight: 900; margin: 0 auto 8px; }
-            .title { margin: 0; font-size: 20px; font-weight: 800; }
-            .subtle { margin: 4px 0 0; font-size: 12px; }
-            .section { padding: 12px 14px; }
-            table { width: 100%; border-collapse: collapse; }
-            th, td { border: 1px solid #d1d5db; padding: 7px; font-size: 12px; }
-            th { background: #f9fafb; text-align: left; }
-            .totals { width: 320px; margin-left: auto; margin-top: 10px; }
-            .totals td { font-size: 13px; }
-            .totals .final td { background: #111827; color: #fff; font-weight: 800; }
-            .cae { margin-top: 12px; border: 1px solid #d1d5db; padding: 8px; background: #f9fafb; font-size: 12px; }
-            @media print {
-              body { background: #fff; padding: 0; }
-              .sheet { max-width: 100%; border: none; }
-            }
-          </style>
-        </head>
-        <body>
-          <section class="sheet">
-            <header class="header">
-              <div class="header-left">
-                <div class="brand">
-                  <img src="${logoCge}" alt="Logo ${escapeHtml(WORKSHOP_COMPANY_NAME)}" />
-                  <div>
-                    <h1>${escapeHtml(WORKSHOP_COMPANY_NAME)}</h1>
-                    <p class="muted">${escapeHtml(AFIP_ISSUER_NAME)}</p>
-                    <p class="muted">${escapeHtml(WORKSHOP_COMPANY_ADDRESS)}</p>
-                    <p class="muted">Tel: ${escapeHtml(WORKSHOP_COMPANY_PHONE)}</p>
-                  </div>
-                </div>
-              </div>
-              <div class="header-right">
-                <div class="letter">${escapeHtml(afipTipo)}</div>
-                <h2 class="title">${escapeHtml(comprobanteLabel)}</h2>
-                <p class="subtle"><b>Número:</b> ${escapeHtml(comprobanteNumero)}</p>
-                <p class="subtle"><b>Fecha:</b> ${escapeHtml(dayjs(venta?.fecha || new Date()).format("DD/MM/YYYY HH:mm"))}</p>
-              </div>
-            </header>
-
-            <section class="section">
-              <table>
-                <tbody>
-                  <tr>
-                    <td><b>Cliente</b></td>
-                    <td>${escapeHtml(orden?.cliente_nombre || "Consumidor final")}</td>
-                    <td><b>CUIT</b></td>
-                    <td>${escapeHtml(clienteCuit)}</td>
-                  </tr>
-                  <tr>
-                    <td><b>Documento</b></td>
-                    <td>${escapeHtml(orden?.cliente_documento || "-")}</td>
-                    <td><b>Condición IVA</b></td>
-                    <td>${escapeHtml(clienteCondicionIva)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </section>
-
-            <section class="section">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Descripción</th>
-                    <th style="text-align:right;">Cant.</th>
-                    <th style="text-align:right;">Precio unit.</th>
-                    <th style="text-align:right;">Subtotal</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${afipItemsRows}
-                </tbody>
-              </table>
-
-              <table class="totals">
-                <tbody>
-                  <tr>
-                    <td><b>Subtotal</b></td>
-                    <td style="text-align:right;">$${subtotal.toFixed(2)}</td>
-                  </tr>
-                  <tr>
-                    <td><b>IVA (${Number(venta?.afip_iva_alicuota || 0).toFixed(1)}%)</b></td>
-                    <td style="text-align:right;">$${ivaImporte.toFixed(2)}</td>
-                  </tr>
-                  <tr class="final">
-                    <td><b>TOTAL</b></td>
-                    <td style="text-align:right;"><b>$${totalAfip.toFixed(2)}</b></td>
-                  </tr>
-                </tbody>
-              </table>
-
-              <div class="cae">
-                <p class="muted" style="margin: 0;"><b>CAE:</b> ${escapeHtml(cae)}</p>
-                <p class="muted" style="margin: 3px 0 0;"><b>Vto. CAE:</b> ${escapeHtml(caeVto ? dayjs(caeVto).format("DD/MM/YYYY") : "-")}</p>
-              </div>
-            </section>
-          </section>
-        </body>
-      </html>
-    `;
-
-    printWindow.document.open();
-    printWindow.document.write(afipHtml);
-    printWindow.document.close();
-    printWhenReady(printWindow);
-    return;
-  }
-
-  const total = Number(venta?.total || 0);
-  const orderNumber = formatOrderNumber(orden?.nro_orden);
-  const detalleDiagnosticoHtml = (items || [])
-    .map((item) => escapeHtml(item?.descripcion || "-").replace(/\n/g, "<br />"))
-    .filter((detalle) => detalle && detalle !== "-")
-    .map((detalle) => `<p class="detail-line">${detalle}</p>`)
-    .join("");
-  const copies = ["COPIA LOCAL", "COPIA CLIENTE"];
-  const copiesHtml = copies
-    .map(
-      (copyLabel, index) => `
-        <section class="sheet ${index === 0 ? "copy-break" : ""}">
-          <header class="header">
-            <div class="header-left">
-              <div class="brand">
-                <img src="${logoCge}" alt="Logo CGE Computacion" />
-                <div>
-                  <h1 class="company-name">CGE COMPUTACION</h1>
-                  <p class="company-line">${escapeHtml(AFIP_ISSUER_NAME)}</p>
-                  <p class="company-line">${escapeHtml(AFIP_ISSUER_ADDRESS)} - ${escapeHtml(AFIP_ISSUER_CITY)}</p>
-                  <p class="company-line">Tel: ${escapeHtml(WORKSHOP_COMPANY_PHONE)}</p>
-                </div>
-              </div>
-            </div>
-            <div class="header-right">
-              <div class="x-box">X</div>
-              <h2 class="report-title">INFORME TECNICO</h2>
-              <p class="report-number">N° ${escapeHtml(orderNumber)}</p>
-              <p class="report-date">Fecha: ${dayjs(venta?.fecha || new Date()).format("DD/MM/YYYY")}</p>
-              <span class="copy-badge">${copyLabel}</span>
-            </div>
-          </header>
-
-          <table class="data-table">
-            <tbody>
-              <tr>
-                <td class="label">Cliente:</td>
-                <td class="value-large">${escapeHtml(orden?.cliente_nombre || "-")}</td>
-                <td class="label">Documento:</td>
-                <td>${escapeHtml(orden?.cliente_documento || "-")}</td>
-              </tr>
-              <tr>
-                <td class="label">Telefono:</td>
-                <td class="value-large">${escapeHtml(orden?.cliente_telefono || "-")}</td>
-                <td class="label">Fecha ingreso:</td>
-                <td>${dayjs(orden?.fecha_creacion || venta?.fecha || new Date()).format("DD/MM/YYYY")}</td>
-              </tr>
-              <tr>
-                <td class="label">Equipo:</td>
-                <td class="value-large">${escapeHtml(orden?.equipo || "-")}</td>
-                <td class="label">N° Serie:</td>
-                <td>N/A</td>
-              </tr>
-              <tr>
-                <td class="label">Falla reportada:</td>
-                <td colspan="3">${escapeHtml(orden?.diagnostico_inicial || "-")}</td>
-              </tr>
-            </tbody>
-          </table>
-
-          <div class="bar">DETALLE DEL DIAGNOSTICO Y REPARACION</div>
-          <div class="detail-space">
-            ${detalleDiagnosticoHtml || '<p class="detail-line">-</p>'}
-          </div>
-
-          <table class="totals">
-            <tbody>
-              <tr>
-                <td class="label">Importe de reparacion:</td>
-                <td class="value">${escapeHtml(`$${total.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)}</td>
-              </tr>
-            </tbody>
-            <tbody class="totals-final">
-              <tr>
-                <td class="label">TOTAL:</td>
-                <td class="value">${escapeHtml(`$${total.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)}</td>
-              </tr>
-            </tbody>
-          </table>
-
-          <div class="signatures">
-            <div class="sign">
-              <div class="sign-line"></div>
-              Firma del tecnico
-            </div>
-            <div class="sign">
-              <div class="sign-line"></div>
-              Firma del cliente
-            </div>
-          </div>
-        </section>
-      `
-    )
-    .join("");
   const html = `
     <!DOCTYPE html>
     <html lang="es">
       <head>
         <meta charset="UTF-8" />
-        <title>Informe tecnico ${escapeHtml(orderNumber)}</title>
+        <title>${escapeHtml(comprobanteLabel)} ${escapeHtml(comprobanteNumero)}</title>
         <style>
           * { box-sizing: border-box; }
-          body { font-family: Arial, sans-serif; margin: 0; padding: 12px; background: #efefef; color: #111; }
-          .sheet { max-width: 920px; margin: 0 auto; border: 1px solid #222; background: #fff; }
-          .sheet + .sheet { margin-top: 14px; }
-          .header { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #222; }
-          .header-left, .header-right { padding: 12px; min-height: 132px; }
-          .header-left { border-right: 1px solid #222; }
-          .brand { display: flex; gap: 14px; align-items: flex-start; }
-          .brand img { width: 130px; height: 92px; object-fit: contain; }
-          .company-name { margin: 10px 0 4px; font-size: 29px; font-weight: 800; letter-spacing: 0.3px; }
-          .company-line { margin: 1px 0; font-size: 13px; }
-          .x-box { width: 40px; height: 40px; border: 2px solid #222; margin: 0 auto 8px; text-align: center; line-height: 36px; font-size: 31px; font-weight: 700; }
-          .report-title { margin: 0; text-align: center; font-size: 40px; font-weight: 900; letter-spacing: 1px; }
-          .report-number { margin: 2px 0 0; text-align: center; font-size: 35px; font-weight: 700; }
-          .report-date { margin: 6px 0 0; text-align: center; font-size: 19px; }
-          .copy-badge { display: table; margin: 8px auto 0; border: 1px solid #999; padding: 2px 8px; font-size: 11px; }
-          .data-table { width: 100%; border-collapse: collapse; }
-          .data-table td { border: 1px solid #bbb; padding: 4px 6px; font-size: 13px; }
-          .data-table td.label { width: 21%; background: #f2f2f2; font-weight: 700; }
-          .data-table td.value-large { width: 31%; }
-          .bar { background: #050505; color: #fff; font-weight: 700; text-transform: uppercase; font-size: 13px; padding: 4px 8px; }
-          .detail-space { min-height: 170px; padding: 8px; border-bottom: 1px solid #bbb; }
-          .detail-line { margin: 0 0 6px; font-size: 13px; line-height: 1.35; }
-          .totals { width: 100%; border-collapse: collapse; }
-          .totals td { border: 1px solid #bbb; padding: 2px 8px; font-size: 14px; }
-          .totals .label { text-align: right; font-weight: 700; }
-          .totals .value { width: 28%; text-align: right; font-weight: 700; }
-          .totals-final td { background: #050505; color: #fff; font-size: 30px; font-weight: 900; padding: 5px 8px; }
-          .signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 18px 16px 14px; }
-          .sign { text-align: center; font-size: 12px; }
-          .sign-line { border-top: 1px solid #222; width: 65%; margin: 0 auto 3px; }
+          body { font-family: Arial, sans-serif; margin: 0; padding: 18px; background: #f3f4f6; color: #111827; }
+          .sheet { max-width: 860px; margin: 0 auto; background: #fff; border: 1px solid #1f2937; }
+          .header { display: grid; grid-template-columns: 1fr 220px; border-bottom: 1px solid #1f2937; }
+          .header-left { padding: 14px; border-right: 1px solid #1f2937; }
+          .header-right { padding: 14px; text-align: center; }
+          .brand { display: flex; gap: 10px; align-items: flex-start; }
+          .brand img { width: 88px; height: 88px; object-fit: contain; border: 1px solid #d1d5db; }
+          .brand h1 { margin: 0 0 4px; font-size: 22px; font-weight: 800; }
+          .muted { margin: 2px 0; font-size: 12px; color: #374151; }
+          .letter { border: 2px solid #111827; width: 46px; height: 46px; line-height: 42px; font-size: 28px; font-weight: 900; margin: 0 auto 8px; }
+          .title { margin: 0; font-size: 20px; font-weight: 800; }
+          .subtle { margin: 4px 0 0; font-size: 12px; }
+          .section { padding: 12px 14px; }
+          table { width: 100%; border-collapse: collapse; }
+          th, td { border: 1px solid #d1d5db; padding: 7px; font-size: 12px; }
+          th { background: #f9fafb; text-align: left; }
+          .totals { width: 320px; margin-left: auto; margin-top: 10px; }
+          .totals td { font-size: 13px; }
+          .totals .final td { background: #111827; color: #fff; font-weight: 800; }
+          .cae { margin-top: 12px; border: 1px solid #d1d5db; padding: 8px; background: #f9fafb; font-size: 12px; }
           @media print {
-            body { background: #fff; padding: 0; margin: 0; }
-            .sheet { border: none; max-width: 100%; }
-            .sheet + .sheet { margin-top: 0; }
-            .copy-break { page-break-after: always; }
+            body { background: #fff; padding: 0; }
+            .sheet { max-width: 100%; border: none; }
           }
         </style>
       </head>
       <body>
-        ${copiesHtml}
+        <section class="sheet">
+          <header class="header">
+            <div class="header-left">
+              <div class="brand">
+                <img src="${logoCge}" alt="Logo ${escapeHtml(WORKSHOP_COMPANY_NAME)}" />
+                <div>
+                  <h1>${escapeHtml(WORKSHOP_COMPANY_NAME)}</h1>
+                  <p class="muted">${escapeHtml(AFIP_ISSUER_NAME)}</p>
+                  <p class="muted">${escapeHtml(WORKSHOP_COMPANY_ADDRESS)}</p>
+                  <p class="muted">Tel: ${escapeHtml(WORKSHOP_COMPANY_PHONE)}</p>
+                </div>
+              </div>
+            </div>
+            <div class="header-right">
+              <div class="letter">${escapeHtml(facturaTipo)}</div>
+              <h2 class="title">${escapeHtml(comprobanteLabel)}</h2>
+              <p class="subtle"><b>Número:</b> ${escapeHtml(comprobanteNumero)}</p>
+              <p class="subtle"><b>Fecha:</b> ${escapeHtml(dayjs(venta?.fecha || new Date()).format("DD/MM/YYYY HH:mm"))}</p>
+            </div>
+          </header>
+
+          <section class="section">
+            <table>
+              <tbody>
+                <tr>
+                  <td><b>Cliente</b></td>
+                  <td>${escapeHtml(orden?.cliente_nombre || "Consumidor final")}</td>
+                  <td><b>CUIT</b></td>
+                  <td>${escapeHtml(clienteCuit)}</td>
+                </tr>
+                <tr>
+                  <td><b>Documento</b></td>
+                  <td>${escapeHtml(orden?.cliente_documento || "-")}</td>
+                  <td><b>Condición IVA</b></td>
+                  <td>${escapeHtml(clienteCondicionIva)}</td>
+                </tr>
+                <tr>
+                  <td><b>Orden reparación</b></td>
+                  <td>${escapeHtml(formatOrderNumber(orden?.nro_orden))}</td>
+                  <td><b>Equipo</b></td>
+                  <td>${escapeHtml(orden?.equipo || "-")}</td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="section">
+            <table>
+              <thead>
+                <tr>
+                  <th>Descripción</th>
+                  <th style="text-align:right;">Cant.</th>
+                  <th style="text-align:right;">Precio unit.</th>
+                  <th style="text-align:right;">Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows}
+              </tbody>
+            </table>
+
+            <table class="totals">
+              <tbody>
+                <tr>
+                  <td><b>Subtotal</b></td>
+                  <td style="text-align:right;">$${subtotal.toFixed(2)}</td>
+                </tr>
+                <tr>
+                  <td><b>IVA (${ivaAlicuota.toFixed(1)}%)</b></td>
+                  <td style="text-align:right;">$${ivaImporte.toFixed(2)}</td>
+                </tr>
+                <tr class="final">
+                  <td><b>TOTAL</b></td>
+                  <td style="text-align:right;"><b>$${total.toFixed(2)}</b></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="cae">
+              <p class="muted" style="margin: 0;"><b>CAE:</b> ${escapeHtml(cae)}</p>
+              <p class="muted" style="margin: 3px 0 0;"><b>Vto. CAE:</b> ${escapeHtml(caeVto ? dayjs(caeVto).format("DD/MM/YYYY") : "-")}</p>
+            </div>
+          </section>
+        </section>
       </body>
     </html>
   `;
@@ -741,6 +596,8 @@ function OrdenesPage() {
   const [facturaOrden, setFacturaOrden] = useState(null);
   const [facturaNotice, setFacturaNotice] = useState("");
   const [ultimaFacturaData, setUltimaFacturaData] = useState(null);
+  const [ventaExistenteOrdenData, setVentaExistenteOrdenData] = useState(null);
+  const [isCheckingVentaExistente, setIsCheckingVentaExistente] = useState(false);
   const [isDispositivoManual, setIsDispositivoManual] = useState(false);
   const [isClienteModalOpen, setIsClienteModalOpen] = useState(false);
   const [clienteForm, setClienteForm] = useState(initialClienteForm);
@@ -963,6 +820,8 @@ function OrdenesPage() {
     setEditingId(null);
     setEditingOrderNumber(null);
     setDetailId(null);
+    setVentaExistenteOrdenData(null);
+    setIsCheckingVentaExistente(false);
     setEditLoadError("");
     setOrdenForm(initialOrden);
     setMovForm(initialMov);
@@ -970,9 +829,36 @@ function OrdenesPage() {
     setIsFormOpen(true);
   };
 
+  const fetchExistingFacturaData = async (ordenId, ordenSnapshot = null) => {
+    const ventasOrden = await api.ventas.list({ origen: "orden", orden_id: ordenId });
+    const ventaExistente = Array.isArray(ventasOrden) && ventasOrden.length > 0 ? ventasOrden[0] : null;
+
+    if (!ventaExistente?.id) {
+      return null;
+    }
+
+    const [detalleOrden, ventaDetalle] = await Promise.all([
+      ordenSnapshot
+        ? Promise.resolve(ordenSnapshot)
+        : queryClient.fetchQuery({
+            queryKey: ["orden-detalle", ordenId],
+            queryFn: () => api.ordenes.getById(ordenId)
+          }),
+      api.ventas.getById(ventaExistente.id)
+    ]);
+
+    return {
+      venta: ventaDetalle,
+      orden: detalleOrden,
+      items: ventaDetalle?.items || []
+    };
+  };
+
   const openEdit = async (orden) => {
     setIsLoadingEdit(true);
     setEditLoadError("");
+    setVentaExistenteOrdenData(null);
+    setIsCheckingVentaExistente(true);
     setDetailId(orden.id);
 
     try {
@@ -987,10 +873,18 @@ function OrdenesPage() {
       setMovForm(initialMov);
       setIsDispositivoManual(false);
       setIsFormOpen(true);
+
+      try {
+        const facturaData = await fetchExistingFacturaData(orden.id, detalleOrden);
+        setVentaExistenteOrdenData(facturaData);
+      } catch (error) {
+        setFacturaError(error.message || "No se pudo verificar si la orden ya estaba facturada.");
+      }
     } catch (error) {
       setDetailId(null);
       setEditLoadError(error.message || "No se pudo cargar la orden para editar.");
     } finally {
+      setIsCheckingVentaExistente(false);
       setIsLoadingEdit(false);
     }
   };
@@ -1032,11 +926,21 @@ function OrdenesPage() {
     setIsLoadingFacturaOrden(true);
 
     try {
+      const facturaExistenteData = await fetchExistingFacturaData(ordenId);
+      if (facturaExistenteData) {
+        setVentaExistenteOrdenData(facturaExistenteData);
+        setUltimaFacturaData(facturaExistenteData);
+        setFacturaNotice("La orden ya estaba facturada. Se reimprimió la factura existente.");
+        renderAndPrintFactura(facturaExistenteData);
+        return;
+      }
+
       const detalleOrden = await queryClient.fetchQuery({
         queryKey: ["orden-detalle", ordenId],
         queryFn: () => api.ordenes.getById(ordenId)
       });
 
+      setVentaExistenteOrdenData(null);
       setFacturaOrden(detalleOrden);
       setFacturaForm(initialFacturaForm);
       setIsFacturaOpen(true);
@@ -1235,6 +1139,8 @@ function OrdenesPage() {
           setEditingId(null);
           setEditingOrderNumber(null);
           setDetailId(null);
+          setVentaExistenteOrdenData(null);
+          setIsCheckingVentaExistente(false);
           setMovForm(initialMov);
           setEditLoadError("");
         }}
@@ -1424,8 +1330,28 @@ function OrdenesPage() {
               {editingId ? "Guardar cambios" : "Crear orden"}
             </button>
             {isEditMode ? (
-              <button type="button" className="secondary" onClick={() => openFactura()} disabled={isLoadingFacturaOrden}>
-                {isLoadingFacturaOrden ? "Cargando orden..." : "Generar factura"}
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => {
+                  if (ventaExistenteOrdenData) {
+                    setUltimaFacturaData(ventaExistenteOrdenData);
+                    setFacturaNotice("La orden ya estaba facturada. Se reimprimió la factura existente.");
+                    renderAndPrintFactura(ventaExistenteOrdenData);
+                    return;
+                  }
+
+                  openFactura();
+                }}
+                disabled={isLoadingFacturaOrden || isCheckingVentaExistente}
+              >
+                {isCheckingVentaExistente
+                  ? "Verificando factura..."
+                  : isLoadingFacturaOrden
+                    ? "Cargando orden..."
+                    : ventaExistenteOrdenData
+                      ? "Reimprimir factura"
+                      : "Generar factura"}
               </button>
             ) : null}
             {isEditMode ? (
