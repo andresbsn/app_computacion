@@ -115,6 +115,193 @@ const renderAndPrintVentaComprobante = (venta) => {
   const subtotal = Number(venta?.subtotal ?? subtotalCalculado);
   const total = Number(venta?.total ?? subtotal);
 
+  if (isAfip) {
+    const matches = String(comprobanteNumero).match(/(\d{4})-(\d{8})/);
+    const puntoVenta = matches?.[1] || "-";
+    const nroComprobante = matches?.[2] || String(comprobanteNumero).replace(/^AFIP-?/i, "") || "-";
+    const cae = venta?.cae || venta?.comprobante?.cae || "-";
+    const caeVtoRaw = venta?.cae_vto || venta?.comprobante?.cae_vto || null;
+    const caeVto = caeVtoRaw ? dayjs(caeVtoRaw).format("DD/MM/YYYY") : "-";
+    const ivaAlicuota = Number(venta?.afip_iva_alicuota || 0);
+    const ivaImporte = Number(venta?.afip_iva_importe ?? Math.max(total - subtotal, 0));
+    const clienteCuit = venta?.cliente_cuit || "-";
+    const clienteRazonSocial = venta?.cliente_nombre || "Consumidor final";
+    const clienteDomicilio = venta?.cliente_direccion || "-";
+    const condicionVenta = venta?.forma_pago ? String(venta.forma_pago).toUpperCase() : "-";
+
+    const afipItemsRows =
+      items.length > 0
+        ? items
+            .map(
+              (item) => `
+                <tr>
+                  <td></td>
+                  <td>${escapeHtml(item.descripcion || "-")}</td>
+                  <td class="num">${Number(item.cantidad || 0).toFixed(2)}</td>
+                  <td>unidades</td>
+                  <td class="num">$${Number(item.precio_unitario || 0).toFixed(2)}</td>
+                  <td class="num">0,00</td>
+                  <td class="num">0,00</td>
+                  <td class="num">$${Number(item.subtotal ?? Number(item.cantidad || 0) * Number(item.precio_unitario || 0)).toFixed(2)}</td>
+                </tr>
+              `
+            )
+            .join("")
+        : '<tr><td colspan="8" class="empty-row">Sin items registrados.</td></tr>';
+
+    const afipHtml = `
+      <!DOCTYPE html>
+      <html lang="es">
+        <head>
+          <meta charset="UTF-8" />
+          <title>${escapeHtml(comprobanteLabel)} ${escapeHtml(comprobanteNumero)}</title>
+          <style>
+            * { box-sizing: border-box; }
+            body { font-family: Arial, sans-serif; margin: 0; background: #fff; color: #000; }
+            .invoice { width: 210mm; min-height: 297mm; margin: 0 auto; padding: 4mm 3mm; }
+            .box { border: 1px solid #222; }
+            .original { text-align: center; font-weight: 700; font-size: 30px; padding: 4px 0 3px; margin-bottom: 2px; }
+            .header { display: grid; grid-template-columns: 1.3fr 85px 1.3fr; }
+            .header-col { border-right: 1px solid #222; min-height: 172px; padding: 6px 8px; }
+            .header-col:last-child { border-right: 0; }
+            .brand { display: flex; align-items: flex-start; gap: 9px; }
+            .brand img { width: 64px; height: 64px; object-fit: contain; }
+            .brand-title { font-size: 32px; font-weight: 700; margin: 0; line-height: 1.05; }
+            .seller-line { margin: 5px 0 0; font-size: 12px; }
+            .seller-line strong { font-size: 17px; }
+            .center-box { text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+            .center-box .letter { font-size: 62px; font-weight: 700; line-height: 0.9; }
+            .center-box .code { font-size: 18px; margin-top: 4px; font-weight: 700; }
+            .doc-title { text-align: left; font-size: 36px; font-weight: 700; margin: 2px 0 8px; }
+            .doc-line { margin: 5px 0; font-size: 16px; font-weight: 400; white-space: nowrap; }
+            .doc-line .doc-label { font-weight: 700; }
+            .doc-line small { font-size: 16px; font-weight: 400; }
+            .row { border: 1px solid #222; border-top: 0; padding: 4px 8px; font-size: 12px; }
+            .row.grid-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+            .row.grid-three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+            .row p { margin: 2px 0; }
+            .items { width: 100%; border-collapse: collapse; margin-top: 2px; }
+            .items th, .items td { border: 1px solid #222; padding: 3px 4px; font-size: 11px; }
+            .items th { text-align: left; background: #f6f6f6; }
+            .items .num { text-align: right; }
+            .items .empty-row { text-align: center; }
+            .body-spacer { min-height: 145mm; border-left: 1px solid #222; border-right: 1px solid #222; border-bottom: 1px solid #222; }
+            .footer-box { border: 1px solid #222; border-top: 0; margin-top: 0; padding: 6px 8px; display: grid; grid-template-columns: 1fr 300px; gap: 12px; }
+            .cae { font-size: 30px; font-weight: 700; align-self: end; }
+            .cae p { margin: 2px 0; }
+            .totals { width: 100%; border-collapse: collapse; }
+            .totals td { border: 1px solid #222; padding: 4px 6px; font-size: 16px; }
+            .totals td:first-child { text-align: right; font-weight: 700; }
+            .totals td:last-child { text-align: right; width: 46%; }
+            .totals .final td { font-weight: 700; }
+            @media print {
+              @page { size: A4 portrait; margin: 0; }
+              body { margin: 0; }
+            }
+          </style>
+        </head>
+        <body>
+          <section class="invoice">
+            <div class="box original">ORIGINAL</div>
+
+            <header class="box header">
+              <section class="header-col">
+                <div class="brand">
+                  <img src="${logoCge}" alt="Logo" />
+                  <p class="brand-title">CGE</p>
+                </div>
+                <p class="brand-title" style="margin-top: 2px;">Computación</p>
+                <p class="seller-line"><strong>Razón Social:</strong> ${escapeHtml(AFIP_ISSUER_NAME)}</p>
+                <p class="seller-line"><strong>Domicilio Comercial:</strong> ${escapeHtml(AFIP_ISSUER_ADDRESS)}</p>
+                <p class="seller-line"><strong>Condición frente al IVA:</strong> Responsable Monotributo</p>
+              </section>
+
+              <section class="header-col center-box">
+                <div class="letter">${escapeHtml(afipTipo || "A")}</div>
+                <div class="code">COD. 011</div>
+              </section>
+
+              <section class="header-col">
+                <h2 class="doc-title">FACTURA</h2>
+                <p class="doc-line"><span class="doc-label">Punto de Venta:</span> ${escapeHtml(puntoVenta)} &nbsp;&nbsp; <span class="doc-label">Comp. Nro:</span> <small>${escapeHtml(nroComprobante)}</small></p>
+                <p class="doc-line"><span class="doc-label">Fecha de Emisión:</span> <small>${escapeHtml(dayjs(venta?.fecha || new Date()).format("DD/MM/YYYY"))}</small></p>
+                <p class="doc-line"><span class="doc-label">CUIT:</span> <small>${escapeHtml(AFIP_ISSUER_CUIL)}</small></p>
+                <p class="doc-line"><span class="doc-label">Fecha de Inicio de Actividades:</span> <small>01/02/2021</small></p>
+              </section>
+            </header>
+
+            <section class="row grid-three">
+              <p><strong>Período Facturado Desde:</strong> 01/04/2026</p>
+              <p><strong>Hasta:</strong> 30/04/2026</p>
+              <p><strong>Fecha de Vto. para el pago:</strong> 10/05/2026</p>
+            </section>
+
+            <section class="row grid-two">
+              <div>
+                <p><strong>CUIT:</strong> ${escapeHtml(clienteCuit)}</p>
+                <p><strong>Condición frente al IVA:</strong> ${escapeHtml(venta?.cliente_condicion_iva || "IVA Sujeto Exento")}</p>
+                <p><strong>Condición de venta:</strong> ${escapeHtml(condicionVenta)}</p>
+              </div>
+              <div>
+                <p><strong>Apellido y Nombre / Razón Social:</strong> ${escapeHtml(clienteRazonSocial)}</p>
+                <p><strong>Domicilio:</strong> ${escapeHtml(clienteDomicilio)}</p>
+              </div>
+            </section>
+
+            <table class="items">
+              <thead>
+                <tr>
+                  <th style="width: 6%;">Código</th>
+                  <th style="width: 34%;">Producto / Servicio</th>
+                  <th style="width: 11%;">Cantidad</th>
+                  <th style="width: 9%;">U. Medida</th>
+                  <th style="width: 14%;">Precio Unit.</th>
+                  <th style="width: 10%;">% Bonif.</th>
+                  <th style="width: 10%;">Imp. Bonif.</th>
+                  <th style="width: 16%;">Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${afipItemsRows}
+              </tbody>
+            </table>
+
+            <div class="body-spacer"></div>
+
+            <section class="footer-box">
+              <div class="cae">
+                <p><strong>CAE N°:</strong> ${escapeHtml(cae)}</p>
+                <p><strong>Fecha de Vto. de CAE:</strong> ${escapeHtml(caeVto)}</p>
+              </div>
+              <table class="totals">
+                <tbody>
+                  <tr>
+                    <td>Subtotal:</td>
+                    <td>$ ${subtotal.toFixed(2)}</td>
+                  </tr>
+                  <tr>
+                    <td>Importe Otros Tributos:</td>
+                    <td>$ 0.00</td>
+                  </tr>
+                  <tr class="final">
+                    <td>Importe Total:</td>
+                    <td>$ ${total.toFixed(2)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+          </section>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.open();
+    printWindow.document.write(afipHtml);
+    printWindow.document.close();
+    printWhenReady(printWindow);
+    return;
+  }
+
   const fiscalBlock = isAfip
     ? `
       <p class="muted"><b>Razon social:</b> ${escapeHtml(AFIP_ISSUER_NAME)}</p>
