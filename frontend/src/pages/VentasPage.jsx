@@ -43,6 +43,19 @@ const resolveAfipComprobanteLabel = (value) => {
   return "FACTURA AFIP";
 };
 
+const isVentaAfip = (venta) => {
+  const tipo = String(venta?.tipo || "")
+    .trim()
+    .toLowerCase();
+  const comprobanteNumero = String(venta?.comprobante_numero || venta?.comprobante?.numero || "")
+    .trim()
+    .toUpperCase();
+  const afipTipoComprobante = normalizeAfipComprobanteTipo(venta?.afip_tipo_comprobante || venta?.comprobante?.afip_tipo_comprobante);
+  const cae = String(venta?.cae || venta?.comprobante?.cae || "").trim();
+
+  return tipo === "afip" || comprobanteNumero.startsWith("AFIP") || Boolean(afipTipoComprobante) || Boolean(cae);
+};
+
 const printWhenReady = (printWindow) => {
   let didPrint = false;
 
@@ -92,10 +105,9 @@ const renderAndPrintVentaComprobante = (venta) => {
     return;
   }
 
-  const comprobanteNumero = venta?.comprobante_numero || "-";
-  const tipoComprobante = (venta?.tipo || "").toString().toLowerCase();
-  const isAfip = tipoComprobante === "afip" || comprobanteNumero.toUpperCase().startsWith("AFIP");
-  const afipTipo = normalizeAfipComprobanteTipo(venta?.afip_tipo_comprobante);
+  const comprobanteNumero = venta?.comprobante?.numero || venta?.comprobante_numero || "-";
+  const isAfip = isVentaAfip(venta);
+  const afipTipo = normalizeAfipComprobanteTipo(venta?.afip_tipo_comprobante || venta?.comprobante?.afip_tipo_comprobante);
   const comprobanteLabel = isAfip ? resolveAfipComprobanteLabel(afipTipo) : "Comprobante de venta";
   const emisorNombre = isAfip ? AFIP_ISSUER_NAME : "CGE Computacion";
   const items = venta?.items || [];
@@ -195,8 +207,10 @@ const renderAndPrintVentaComprobante = (venta) => {
           <p class="total">TOTAL: $${total.toFixed(2)}</p>
           ${
             isAfip
-              ? `<p class="muted" style="text-align: right;"><b>CAE:</b> ${escapeHtml(venta?.cae || "-")} | <b>Vto CAE:</b> ${escapeHtml(
-                  venta?.cae_vto ? dayjs(venta.cae_vto).format("DD/MM/YYYY") : "-"
+              ? `<p class="muted" style="text-align: right;"><b>CAE:</b> ${escapeHtml(venta?.cae || venta?.comprobante?.cae || "-")} | <b>Vto CAE:</b> ${escapeHtml(
+                  venta?.cae_vto || venta?.comprobante?.cae_vto
+                    ? dayjs(venta?.cae_vto || venta?.comprobante?.cae_vto).format("DD/MM/YYYY")
+                    : "-"
                 )}</p>`
               : ""
           }
@@ -363,7 +377,7 @@ function VentasPage() {
         queryFn: () => api.ventas.getById(ventaId)
       });
 
-      const esOrdenConFacturaLocal = ventaDetalleCompleto?.origen === "orden" && String(ventaDetalleCompleto?.tipo || "").toLowerCase() !== "afip";
+      const esOrdenConFacturaLocal = ventaDetalleCompleto?.origen === "orden" && !isVentaAfip(ventaDetalleCompleto);
 
       if (esOrdenConFacturaLocal) {
         const technicalReportHtml = await api.ventas.getTechnicalReportHtml(ventaId);
