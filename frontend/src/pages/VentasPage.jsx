@@ -512,6 +512,12 @@ function VentasPage() {
   const ordenes = ordenesQuery.data || [];
   const ventas = ventasQuery.data || [];
   const ventaDetalle = detalleQuery.data;
+  const clienteSeleccionado = useMemo(
+    () => clientes.find((cliente) => Number(cliente.id) === Number(form.cliente_id)) || null,
+    [clientes, form.cliente_id]
+  );
+  const clienteSeleccionadoCuit = String(clienteSeleccionado?.cuit || "").replace(/\D/g, "");
+  const puedeUsarFacturaA = Boolean(form.cliente_id) && clienteSeleccionadoCuit.length === 11;
 
   const PAGE_SIZE = 8;
   const totalPages = Math.max(1, Math.ceil(ventas.length / PAGE_SIZE));
@@ -530,6 +536,12 @@ function VentasPage() {
       setCurrentPage(totalPages);
     }
   }, [currentPage, totalPages]);
+
+  useEffect(() => {
+    if (form.tipo === "afip" && form.afip_tipo_comprobante === "A" && !puedeUsarFacturaA) {
+      setForm((prev) => ({ ...prev, afip_tipo_comprobante: "B" }));
+    }
+  }, [form.tipo, form.afip_tipo_comprobante, puedeUsarFacturaA]);
 
   const openCreate = () => {
     setFormError("");
@@ -727,6 +739,11 @@ function VentasPage() {
               return;
             }
 
+            if (form.tipo === "afip" && form.afip_tipo_comprobante === "A" && !puedeUsarFacturaA) {
+              setFormError("Factura A requiere cliente con CUIT valido (11 digitos). Para consumidor final use Factura B.");
+              return;
+            }
+
             setFormError("");
             createMutation.mutate({
               ...form,
@@ -762,7 +779,9 @@ function VentasPage() {
                   onChange={(e) => setForm({ ...form, afip_tipo_comprobante: e.target.value })}
                   required
                 >
-                  <option value="A">Factura A</option>
+                  <option value="A" disabled={!puedeUsarFacturaA}>
+                    Factura A{!puedeUsarFacturaA ? " (requiere cliente con CUIT)" : ""}
+                  </option>
                   <option value="B">Factura B</option>
                 </select>
               </label>

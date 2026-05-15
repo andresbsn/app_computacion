@@ -2382,6 +2382,38 @@ app.post("/ventas", async (req, res) => {
             });
           }
 
+          const afipTipoComprobante = String(body.afip_tipo_comprobante || "")
+            .trim()
+            .toUpperCase();
+
+          if (afipTipoComprobante === "A") {
+            if (!clienteFacturacion) {
+              await client.query("ROLLBACK");
+              logVentaTrace(traceId, "POST /ventas | ROLLBACK Factura A AFIP sin cliente");
+              return {
+                error: {
+                  code: 400,
+                  message: "Factura A requiere cliente con CUIT valido. Para consumidor final use Factura B"
+                }
+              };
+            }
+
+            const clienteCuit = normalizeDigits(clienteFacturacion.cuit);
+            if (clienteCuit.length !== 11) {
+              await client.query("ROLLBACK");
+              logVentaTrace(traceId, "POST /ventas | ROLLBACK Factura A AFIP con CUIT invalido", {
+                cliente_id: clienteFacturacion.id,
+                cuitMasked: maskCuit(clienteFacturacion.cuit)
+              });
+              return {
+                error: {
+                  code: 400,
+                  message: "Factura A requiere CUIT de 11 digitos en el cliente. Para consumidor final use Factura B"
+                }
+              };
+            }
+          }
+
           if (body.origen === "orden") {
             if (!clienteFacturacion) {
               await client.query("ROLLBACK");
