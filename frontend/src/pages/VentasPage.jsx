@@ -9,6 +9,12 @@ const AFIP_ISSUER_NAME = import.meta.env.VITE_AFIP_ISSUER_NAME || "Federico Zaba
 const AFIP_ISSUER_ADDRESS = import.meta.env.VITE_AFIP_ISSUER_ADDRESS || "Rivadavia 357";
 const AFIP_ISSUER_CITY = import.meta.env.VITE_AFIP_ISSUER_CITY || "Villa Ramallo";
 const AFIP_ISSUER_CUIL = import.meta.env.VITE_AFIP_ISSUER_CUIL || "20-30257623-9";
+const AFIP_ISSUER_IVA_CONDITION = import.meta.env.VITE_AFIP_ISSUER_IVA_CONDITION || "Responsable Inscripto";
+const AFIP_COMPROBANTE_CODE_BY_LETTER = {
+  A: "001",
+  B: "006",
+  C: "011"
+};
 
 const escapeHtml = (value) =>
   String(value ?? "-")
@@ -41,6 +47,11 @@ const resolveAfipComprobanteLabel = (value) => {
   }
 
   return "FACTURA AFIP";
+};
+
+const resolveAfipComprobanteCode = (value) => {
+  const tipo = normalizeAfipComprobanteTipo(value);
+  return AFIP_COMPROBANTE_CODE_BY_LETTER[tipo || ""] || "011";
 };
 
 const isVentaAfip = (venta) => {
@@ -119,6 +130,7 @@ const renderAndPrintVentaComprobante = (venta) => {
     const matches = String(comprobanteNumero).match(/(\d{4})-(\d{8})/);
     const puntoVenta = matches?.[1] || "-";
     const nroComprobante = matches?.[2] || String(comprobanteNumero).replace(/^AFIP-?/i, "") || "-";
+    const afipComprobanteCode = resolveAfipComprobanteCode(afipTipo);
     const cae = venta?.cae || venta?.comprobante?.cae || "-";
     const caeVtoRaw = venta?.cae_vto || venta?.comprobante?.cae_vto || null;
     const caeVto = caeVtoRaw ? dayjs(caeVtoRaw).format("DD/MM/YYYY") : "-";
@@ -213,12 +225,12 @@ const renderAndPrintVentaComprobante = (venta) => {
                 <p class="brand-title" style="margin-top: 2px;">Computación</p>
                 <p class="seller-line"><strong>Razón Social:</strong> ${escapeHtml(AFIP_ISSUER_NAME)}</p>
                 <p class="seller-line"><strong>Domicilio Comercial:</strong> ${escapeHtml(AFIP_ISSUER_ADDRESS)}</p>
-                <p class="seller-line"><strong>Condición frente al IVA:</strong> Responsable Monotributo</p>
+                <p class="seller-line"><strong>Condición frente al IVA:</strong> ${escapeHtml(AFIP_ISSUER_IVA_CONDITION)}</p>
               </section>
 
               <section class="header-col center-box">
                 <div class="letter">${escapeHtml(afipTipo || "A")}</div>
-                <div class="code">COD. 011</div>
+                <div class="code">COD. ${escapeHtml(afipComprobanteCode)}</div>
               </section>
 
               <section class="header-col">
