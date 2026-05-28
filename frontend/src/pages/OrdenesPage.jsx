@@ -113,6 +113,20 @@ const formatOrderNumber = (value) => `#${String(value ?? "-").padStart(7, "0")}`
 
 const roundMoney = (value) => Number(Number(value || 0).toFixed(2));
 const normalizeDigits = (value) => String(value ?? "").replace(/\D/g, "");
+const normalizeClienteCondicionIva = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+
+  if (normalized === "inscripto" || normalized === "exento" || normalized === "consumidor_final") {
+    return normalized;
+  }
+
+  return "consumidor_final";
+};
+const resolveAfipTipoComprobanteByClienteCondicion = (condicionIva) =>
+  normalizeClienteCondicionIva(condicionIva) === "inscripto" ? "A" : "B";
+const shouldDiscriminateAfipIva = (afipTipoComprobante) => normalizeAfipComprobanteTipo(afipTipoComprobante) === "A";
 
 const printWhenReady = (printWindow) => {
   let didPrint = false;
@@ -355,14 +369,16 @@ const renderAndPrintFactura = ({ venta, orden, items }) => {
   const facturaTipo = isAfip
     ? normalizeAfipComprobanteTipo(venta?.afip_tipo_comprobante || venta?.comprobante?.afip_tipo_comprobante) || "B"
     : "X";
+  const discriminaIva = isAfip && shouldDiscriminateAfipIva(facturaTipo);
   const comprobanteLabel = isAfip ? resolveAfipComprobanteLabel(facturaTipo) : "FACTURA LOCAL";
   const comprobanteNumero = venta?.comprobante?.numero || venta?.comprobante_numero || `LOCAL-${venta?.id || "-"}`;
   const cae = isAfip ? venta?.comprobante?.cae || venta?.cae || "-" : "No corresponde";
   const caeVto = isAfip ? venta?.comprobante?.cae_vto || venta?.cae_vto || null : null;
-  const subtotal = Number(venta?.subtotal ?? venta?.total ?? 0);
+  const subtotalBase = Number(venta?.subtotal ?? venta?.total ?? 0);
   const ivaAlicuota = isAfip ? Number(venta?.afip_iva_alicuota || 0) : 0;
   const ivaImporte = isAfip ? Number(venta?.afip_iva_importe || 0) : 0;
-  const total = Number(venta?.total ?? subtotal + ivaImporte);
+  const total = Number(venta?.total ?? subtotalBase + ivaImporte);
+  const subtotal = discriminaIva ? Math.max(total - ivaImporte, 0) : total;
   const clienteCuit = orden?.cliente_cuit || "-";
   const clienteCondicionIva = orden?.cliente_condicion_iva || "-";
   const rows = (items || []).length
@@ -482,10 +498,14 @@ const renderAndPrintFactura = ({ venta, orden, items }) => {
                   <td><b>Subtotal</b></td>
                   <td style="text-align:right;">$${subtotal.toFixed(2)}</td>
                 </tr>
-                <tr>
+                ${
+                  discriminaIva
+                    ? `<tr>
                   <td><b>IVA (${ivaAlicuota.toFixed(1)}%)</b></td>
                   <td style="text-align:right;">$${ivaImporte.toFixed(2)}</td>
-                </tr>
+                </tr>`
+                    : ""
+                }
                 <tr class="final">
                   <td><b>TOTAL</b></td>
                   <td style="text-align:right;"><b>$${total.toFixed(2)}</b></td>
@@ -791,9 +811,20 @@ function OrdenesPage() {
     () => facturaItemsPreview.reduce((acc, item) => acc + Number(item.cantidad) * Number(item.precio_unitario), 0),
     [facturaItemsPreview]
   );
+  const afipTipoComprobanteSugeridoFacturacion = useMemo(
+    () => resolveAfipTipoComprobanteByClienteCondicion(facturaOrden?.cliente_condicion_iva),
+    [facturaOrden?.cliente_condicion_iva]
+  );
+  const discriminaIvaAfipFacturacion = facturaForm.tipo === "afip" && shouldDiscriminateAfipIva(afipTipoComprobanteSugeridoFacturacion);
+
+  useEffect(() => {
+    if (facturaForm.tipo === "afip" && facturaForm.afip_tipo_comprobante !== afipTipoComprobanteSugeridoFacturacion) {
+      setFacturaForm((prev) => ({ ...prev, afip_tipo_comprobante: afipTipoComprobanteSugeridoFacturacion }));
+    }
+  }, [facturaForm.tipo, facturaForm.afip_tipo_comprobante, afipTipoComprobanteSugeridoFacturacion]);
 
   const afipFacturaPreview = useMemo(() => {
-    if (facturaForm.tipo !== "afip") {
+    if (!discriminaIvaAfipFacturacion) {
       return null;
     }
 
@@ -812,7 +843,7 @@ function OrdenesPage() {
       iva: roundMoney(iva),
       neto: roundMoney(neto)
     };
-  }, [facturaForm.tipo, facturaForm.afip_iva_alicuota, facturaTotalPreview]);
+  }, [discriminaIvaAfipFacturacion, facturaForm.afip_iva_alicuota, facturaTotalPreview]);
 
   const selectedCliente = useMemo(() => clientes.find((c) => String(c.id) === String(ordenForm.cliente_id)), [clientes, ordenForm.cliente_id]);
 
@@ -1530,7 +1561,7 @@ function OrdenesPage() {
             onSubmit={(e) => {
               e.preventDefault();
 
-              if (facturaForm.tipo === "afip") {
+              if (facturaForm.tipo === "afip" && shouldDiscriminateAfipIva(afipTipoComprobanteSugeridoFacturacion)) {
                 const clienteCuit = normalizeDigits(facturaOrden?.cliente_cuit);
                 if (clienteCuit.length !== 11) {
                   setFacturaError("El cliente de la orden no tiene CUIT valido. Actualice el cliente antes de facturar AFIP.");
@@ -1548,8 +1579,9 @@ function OrdenesPage() {
               facturarOrdenMutation.mutate({
                 payload: {
                   tipo: facturaForm.tipo,
-                  afip_tipo_comprobante: facturaForm.tipo === "afip" ? facturaForm.afip_tipo_comprobante : null,
-                  afip_iva_alicuota: facturaForm.tipo === "afip" ? Number(facturaForm.afip_iva_alicuota) : null,
+                  afip_tipo_comprobante: facturaForm.tipo === "afip" ? afipTipoComprobanteSugeridoFacturacion : null,
+                  afip_iva_alicuota:
+                    facturaForm.tipo === "afip" && discriminaIvaAfipFacturacion ? Number(facturaForm.afip_iva_alicuota) : null,
                   origen: "orden",
                   orden_id: Number(facturaOrden.id),
                   cliente_id: Number(facturaOrden.cliente_id),
@@ -1584,9 +1616,10 @@ function OrdenesPage() {
                       <select
                         value={facturaForm.afip_tipo_comprobante}
                         onChange={(e) => setFacturaForm({ ...facturaForm, afip_tipo_comprobante: e.target.value })}
+                        disabled
                       >
-                        <option value="A">Factura A</option>
-                        <option value="B">Factura B</option>
+                        <option value="A">Factura A (cliente inscripto)</option>
+                        <option value="B">Factura B (consumidor final/exento)</option>
                       </select>
                     </label>
                     <label>

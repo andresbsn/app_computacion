@@ -302,28 +302,17 @@ const ventaCreateSchema = z
       });
     }
 
-    if (data.tipo === "afip" && !data.afip_tipo_comprobante) {
+    if (
+      data.tipo === "afip" &&
+      data.afip_iva_alicuota !== undefined &&
+      data.afip_iva_alicuota !== null &&
+      !AFIP_IVA_ALICUOTAS.includes(Number(data.afip_iva_alicuota))
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["afip_tipo_comprobante"],
-        message: "afip_tipo_comprobante es obligatorio cuando tipo es 'afip'"
+        path: ["afip_iva_alicuota"],
+        message: "afip_iva_alicuota debe ser 10.5 o 21"
       });
-    }
-
-    if (data.tipo === "afip") {
-      if (data.afip_iva_alicuota === undefined || data.afip_iva_alicuota === null) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["afip_iva_alicuota"],
-          message: "afip_iva_alicuota es obligatorio cuando tipo es 'afip'"
-        });
-      } else if (!AFIP_IVA_ALICUOTAS.includes(Number(data.afip_iva_alicuota))) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["afip_iva_alicuota"],
-          message: "afip_iva_alicuota debe ser 10.5 o 21"
-        });
-      }
     }
   });
 
@@ -359,6 +348,23 @@ const resolveAfipFilePath = (filePath) =>
   path.isAbsolute(filePath) ? filePath : path.resolve(__dirname, "..", filePath);
 
 const normalizeDigits = (value) => String(value ?? "").replace(/\D/g, "");
+
+const normalizeClienteCondicionIva = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+
+  if (normalized === "inscripto" || normalized === "exento" || normalized === "consumidor_final") {
+    return normalized;
+  }
+
+  return "consumidor_final";
+};
+
+const resolveAfipTipoComprobanteByClienteCondicion = (condicionIva) =>
+  normalizeClienteCondicionIva(condicionIva) === "inscripto" ? "A" : "B";
+
+const shouldDiscriminateAfipIva = (afipTipoComprobante) => normalizeComprobanteAfipTipo(afipTipoComprobante) === "A";
 
 const createTraceId = (prefix) =>
   `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1045,10 +1051,11 @@ const buildTechnicalReportHtml = ({ venta, comprobante, orden, cliente, total, d
 
 const buildAfipInvoiceHtml = ({ venta, comprobante, cliente, itemsFacturados = [] }) => {
   const afipTipo = normalizeComprobanteAfipTipo(comprobante.afip_tipo_comprobante);
+  const discriminaIva = shouldDiscriminateAfipIva(afipTipo);
   const comprobanteLabel = resolveAfipComprobanteLabel(afipTipo);
-  const subtotal = Number(venta.subtotal || venta.total || 0);
-  const ivaImporte = Number(venta.afip_iva_importe || 0);
   const total = Number(venta.total || 0);
+  const ivaImporte = Number(venta.afip_iva_importe || 0);
+  const subtotal = discriminaIva ? Math.max(total - ivaImporte, 0) : total;
 
   const itemsRows = itemsFacturados.length
     ? itemsFacturados
@@ -1161,10 +1168,14 @@ const buildAfipInvoiceHtml = ({ venta, comprobante, cliente, itemsFacturados = [
                   <td><b>Subtotal</b></td>
                   <td style="text-align:right;">${escapeHtml(formatCurrency(subtotal))}</td>
                 </tr>
-                <tr>
+                ${
+                  discriminaIva
+                    ? `<tr>
                   <td><b>IVA (${escapeHtml(Number(venta.afip_iva_alicuota || 0).toFixed(1))}%)</b></td>
                   <td style="text-align:right;">${escapeHtml(formatCurrency(ivaImporte))}</td>
-                </tr>
+                </tr>`
+                    : ""
+                }
                 <tr class="final">
                   <td><b>TOTAL</b></td>
                   <td style="text-align:right;"><b>${escapeHtml(formatCurrency(total))}</b></td>
@@ -2121,6 +2132,10 @@ app.post("/ventas", async (req, res) => {
 
     let clienteIdFinal = body.cliente_id ?? null;
     let esPrimeraFacturaOrden = false;
+    let clienteFacturacion = null;
+    let clienteCondicionIva = "consumidor_final";
+    let afipTipoComprobanteResuelto = null;
+    let discriminaIvaAfip = false;
 
     const venta = await withClient(async (client) => {
       await client.query("BEGIN");
@@ -2167,8 +2182,75 @@ app.post("/ventas", async (req, res) => {
           }
         }
 
+        if (body.tipo === "afip") {
+          if (clienteIdFinal) {
+            const clienteResult = await client.query(
+              `SELECT id, documento, cuit, condicion_iva FROM ${schema}.clientes WHERE id = $1`,
+              [clienteIdFinal]
+            );
+
+            if (!clienteResult.rowCount) {
+              await client.query("ROLLBACK");
+              logVentaTrace(traceId, "POST /ventas | ROLLBACK por cliente inexistente para AFIP", {
+                clienteIdFinal
+              });
+              return { error: { code: 400, message: "Cliente no encontrado para facturacion AFIP" } };
+            }
+
+            clienteFacturacion = clienteResult.rows[0];
+            clienteCondicionIva = normalizeClienteCondicionIva(clienteFacturacion.condicion_iva);
+          }
+
+          afipTipoComprobanteResuelto = resolveAfipTipoComprobanteByClienteCondicion(clienteCondicionIva);
+          discriminaIvaAfip = shouldDiscriminateAfipIva(afipTipoComprobanteResuelto);
+
+          const afipTipoComprobanteSolicitado = normalizeComprobanteAfipTipo(body.afip_tipo_comprobante);
+          if (afipTipoComprobanteSolicitado && afipTipoComprobanteSolicitado !== afipTipoComprobanteResuelto) {
+            logVentaTrace(traceId, "POST /ventas | Ajuste tipo comprobante AFIP por condicion IVA cliente", {
+              solicitado: afipTipoComprobanteSolicitado,
+              resuelto: afipTipoComprobanteResuelto,
+              condicion_iva_cliente: clienteCondicionIva,
+              cliente_id: clienteFacturacion?.id || null
+            });
+          }
+
+          if (discriminaIvaAfip) {
+            if (!clienteFacturacion) {
+              await client.query("ROLLBACK");
+              logVentaTrace(traceId, "POST /ventas | ROLLBACK Factura A AFIP sin cliente");
+              return {
+                error: {
+                  code: 400,
+                  message: "Factura A requiere cliente con CUIT valido. Para consumidor final o exento se emite Factura B"
+                }
+              };
+            }
+
+            const clienteCuit = normalizeDigits(clienteFacturacion.cuit);
+            if (clienteCuit.length !== 11) {
+              await client.query("ROLLBACK");
+              logVentaTrace(traceId, "POST /ventas | ROLLBACK Factura A AFIP con CUIT invalido", {
+                cliente_id: clienteFacturacion.id,
+                cuitMasked: maskCuit(clienteFacturacion.cuit)
+              });
+              return {
+                error: {
+                  code: 400,
+                  message: "Factura A requiere CUIT de 11 digitos en el cliente. Actualice CUIT o cambie condicion fiscal del cliente"
+                }
+              };
+            }
+          }
+
+          if (body.origen === "orden" && !clienteFacturacion) {
+            await client.query("ROLLBACK");
+            logVentaTrace(traceId, "POST /ventas | ROLLBACK por orden sin cliente para AFIP");
+            return { error: { code: 400, message: "La orden no tiene cliente asociado para facturar AFIP" } };
+          }
+        }
+
         const baseCalculada = subtotalCalculado - body.descuento + body.impuestos;
-        const afipIvaConfig = body.tipo === "afip" ? resolveAfipIvaConfig(body.afip_iva_alicuota) : null;
+        const afipIvaConfig = body.tipo === "afip" && discriminaIvaAfip ? resolveAfipIvaConfig(body.afip_iva_alicuota) : null;
 
         let totalFinal = roundMoney(baseCalculada);
         let baseImponible = roundMoney(baseCalculada);
@@ -2200,12 +2282,12 @@ app.post("/ventas", async (req, res) => {
           return { error: { code: 400, message: "Total invalido" } };
         }
 
-        if (body.tipo === "afip" && !afipIvaConfig) {
+        if (body.tipo === "afip" && discriminaIvaAfip && !afipIvaConfig) {
           await client.query("ROLLBACK");
           logVentaTrace(traceId, "POST /ventas | ROLLBACK por alicuota AFIP invalida", {
             afip_iva_alicuota: body.afip_iva_alicuota
           });
-          return { error: { code: 400, message: "Alicuota de IVA AFIP invalida" } };
+          return { error: { code: 400, message: "Factura A requiere alicuota de IVA AFIP valida (10.5 o 21)" } };
         }
 
         const montoPagado = body.monto_pagado ?? totalFinal;
@@ -2356,86 +2438,11 @@ app.post("/ventas", async (req, res) => {
           logVentaTrace(traceId, "POST /ventas | Inicio flujo AFIP", {
             clienteIdFinal,
             origen: body.origen,
-            afip_tipo_comprobante: body.afip_tipo_comprobante,
+            afip_tipo_comprobante: afipTipoComprobanteResuelto,
+            cliente_condicion_iva: clienteCondicionIva,
+            discrimina_iva: discriminaIvaAfip,
             afip_iva_alicuota: afipIvaConfig?.rate || null
           });
-          let clienteFacturacion = null;
-          if (clienteIdFinal) {
-            const clienteResult = await client.query(
-              `SELECT id, documento, cuit FROM ${schema}.clientes WHERE id = $1`,
-              [clienteIdFinal]
-            );
-
-            if (!clienteResult.rowCount) {
-              await client.query("ROLLBACK");
-              logVentaTrace(traceId, "POST /ventas | ROLLBACK por cliente inexistente para AFIP", {
-                clienteIdFinal
-              });
-              return { error: { code: 400, message: "Cliente no encontrado para facturacion AFIP" } };
-            }
-
-            clienteFacturacion = clienteResult.rows[0];
-            logVentaTrace(traceId, "POST /ventas | Cliente para AFIP cargado", {
-              cliente_id: clienteFacturacion.id,
-              cuitMasked: maskCuit(clienteFacturacion.cuit),
-              documentoMasked: maskDocument(clienteFacturacion.documento)
-            });
-          }
-
-          const afipTipoComprobante = String(body.afip_tipo_comprobante || "")
-            .trim()
-            .toUpperCase();
-
-          if (afipTipoComprobante === "A") {
-            if (!clienteFacturacion) {
-              await client.query("ROLLBACK");
-              logVentaTrace(traceId, "POST /ventas | ROLLBACK Factura A AFIP sin cliente");
-              return {
-                error: {
-                  code: 400,
-                  message: "Factura A requiere cliente con CUIT valido. Para consumidor final use Factura B"
-                }
-              };
-            }
-
-            const clienteCuit = normalizeDigits(clienteFacturacion.cuit);
-            if (clienteCuit.length !== 11) {
-              await client.query("ROLLBACK");
-              logVentaTrace(traceId, "POST /ventas | ROLLBACK Factura A AFIP con CUIT invalido", {
-                cliente_id: clienteFacturacion.id,
-                cuitMasked: maskCuit(clienteFacturacion.cuit)
-              });
-              return {
-                error: {
-                  code: 400,
-                  message: "Factura A requiere CUIT de 11 digitos en el cliente. Para consumidor final use Factura B"
-                }
-              };
-            }
-          }
-
-          if (body.origen === "orden") {
-            if (!clienteFacturacion) {
-              await client.query("ROLLBACK");
-              logVentaTrace(traceId, "POST /ventas | ROLLBACK por orden sin cliente para AFIP");
-              return { error: { code: 400, message: "La orden no tiene cliente asociado para facturar AFIP" } };
-            }
-
-            const clienteCuit = normalizeDigits(clienteFacturacion.cuit);
-            if (clienteCuit.length !== 11) {
-              await client.query("ROLLBACK");
-              logVentaTrace(traceId, "POST /ventas | ROLLBACK por CUIT invalido de cliente", {
-                cliente_id: clienteFacturacion.id,
-                cuitMasked: maskCuit(clienteFacturacion.cuit)
-              });
-              return {
-                error: {
-                  code: 400,
-                  message: "El cliente de la orden no tiene CUIT valido. Actualice el cliente antes de facturar AFIP"
-                }
-              };
-            }
-          }
 
           try {
             const afipVoucher = await createAfipVoucher({
@@ -2444,7 +2451,7 @@ app.post("/ventas", async (req, res) => {
               ivaImporte,
               ivaAlicuota: afipIvaConfig?.rate,
               cliente: clienteFacturacion,
-              afipTipoComprobante: body.afip_tipo_comprobante,
+              afipTipoComprobante: afipTipoComprobanteResuelto,
               traceId
             });
             numeroComprobante = afipVoucher.numero;
