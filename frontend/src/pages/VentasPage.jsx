@@ -66,6 +66,24 @@ const normalizeClienteCondicionIva = (value) => {
   return "consumidor_final";
 };
 
+const formatClienteCondicionIvaLabel = (value, afipTipoComprobante) => {
+  const normalized = normalizeClienteCondicionIva(value);
+
+  if (normalized === "inscripto") {
+    return "Responsable Inscripto";
+  }
+
+  if (normalized === "exento") {
+    return "IVA Sujeto Exento";
+  }
+
+  if (normalized === "consumidor_final") {
+    return "Consumidor Final";
+  }
+
+  return shouldDiscriminateAfipIva(afipTipoComprobante) ? "Responsable Inscripto" : "Consumidor Final";
+};
+
 const resolveAfipTipoComprobanteByClienteCondicion = (condicionIva) =>
   normalizeClienteCondicionIva(condicionIva) === "inscripto" ? "A" : "B";
 
@@ -156,6 +174,7 @@ const renderAndPrintVentaComprobante = (venta) => {
     const discriminaIva = shouldDiscriminateAfipIva(afipTipo);
     const subtotalNeto = discriminaIva ? Math.max(total - ivaImporte, 0) : total;
     const clienteCuit = venta?.cliente_cuit || "-";
+    const clienteCondicionIvaLabel = formatClienteCondicionIvaLabel(venta?.cliente_condicion_iva, afipTipo);
     const clienteRazonSocial = venta?.cliente_nombre || "Consumidor final";
     const clienteDomicilio = venta?.cliente_direccion || "-";
     const condicionVenta = venta?.forma_pago ? String(venta.forma_pago).toUpperCase() : "-";
@@ -270,7 +289,7 @@ const renderAndPrintVentaComprobante = (venta) => {
             <section class="row grid-two">
               <div>
                 <p><strong>CUIT:</strong> ${escapeHtml(clienteCuit)}</p>
-                <p><strong>Condición frente al IVA:</strong> ${escapeHtml(venta?.cliente_condicion_iva || "IVA Sujeto Exento")}</p>
+                <p><strong>Condición frente al IVA:</strong> ${escapeHtml(clienteCondicionIvaLabel)}</p>
                 <p><strong>Condición de venta:</strong> ${escapeHtml(condicionVenta)}</p>
               </div>
               <div>
