@@ -1580,8 +1580,7 @@ function OrdenesPage() {
                 payload: {
                   tipo: facturaForm.tipo,
                   afip_tipo_comprobante: facturaForm.tipo === "afip" ? afipTipoComprobanteSugeridoFacturacion : null,
-                  afip_iva_alicuota:
-                    facturaForm.tipo === "afip" && discriminaIvaAfipFacturacion ? Number(facturaForm.afip_iva_alicuota) : null,
+                  afip_iva_alicuota: facturaForm.tipo === "afip" ? Number(facturaForm.afip_iva_alicuota) : null,
                   origen: "orden",
                   orden_id: Number(facturaOrden.id),
                   cliente_id: Number(facturaOrden.cliente_id),

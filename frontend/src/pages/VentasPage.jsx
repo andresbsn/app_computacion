@@ -573,7 +573,7 @@ function VentasPage() {
   const afipTipoComprobanteSugerido = resolveAfipTipoComprobanteByClienteCondicion(clienteSeleccionadoCondicionIva);
   const discriminaIvaAfipForm = form.tipo === "afip" && shouldDiscriminateAfipIva(afipTipoComprobanteSugerido);
   const afipIvaAlicuota = form.tipo === "afip" ? Number(form.afip_iva_alicuota || 0) : 0;
-  const afipIvaImporte = discriminaIvaAfipForm ? (baseImponible * afipIvaAlicuota) / 100 : 0;
+  const afipIvaImporte = form.tipo === "afip" ? (baseImponible * afipIvaAlicuota) / 100 : 0;
   const total = baseImponible + afipIvaImporte;
   const isConsumidorFinal = !form.cliente_id;
 
@@ -801,7 +801,7 @@ function VentasPage() {
             createMutation.mutate({
               ...form,
               afip_tipo_comprobante: form.tipo === "afip" ? afipTipoComprobanteSugerido : null,
-              afip_iva_alicuota: form.tipo === "afip" && discriminaIvaAfipForm ? Number(form.afip_iva_alicuota) : null,
+              afip_iva_alicuota: form.tipo === "afip" ? Number(form.afip_iva_alicuota) : null,
               cliente_id: form.cliente_id ? Number(form.cliente_id) : null,
               orden_id: form.orden_id ? Number(form.orden_id) : null,
               descuento: Number(form.descuento || 0),

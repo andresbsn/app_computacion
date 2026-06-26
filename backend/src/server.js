@@ -2256,7 +2256,7 @@ app.post("/ventas", async (req, res) => {
         }
 
         const baseCalculada = subtotalCalculado - body.descuento + body.impuestos;
-        const afipIvaConfig = body.tipo === "afip" && discriminaIvaAfip ? resolveAfipIvaConfig(body.afip_iva_alicuota) : null;
+        const afipIvaConfig = body.tipo === "afip" ? resolveAfipIvaConfig(body.afip_iva_alicuota) : null;
 
         let totalFinal = roundMoney(baseCalculada);
         let baseImponible = roundMoney(baseCalculada);
@@ -2288,12 +2288,12 @@ app.post("/ventas", async (req, res) => {
           return { error: { code: 400, message: "Total invalido" } };
         }
 
-        if (body.tipo === "afip" && discriminaIvaAfip && !afipIvaConfig) {
+        if (body.tipo === "afip" && !afipIvaConfig) {
           await client.query("ROLLBACK");
           logVentaTrace(traceId, "POST /ventas | ROLLBACK por alicuota AFIP invalida", {
             afip_iva_alicuota: body.afip_iva_alicuota
           });
-          return { error: { code: 400, message: "Factura A requiere alicuota de IVA AFIP valida (10.5 o 21)" } };
+          return { error: { code: 400, message: "Factura AFIP requiere alicuota de IVA valida (10.5 o 21)" } };
         }
 
         const montoPagado = body.monto_pagado ?? totalFinal;
