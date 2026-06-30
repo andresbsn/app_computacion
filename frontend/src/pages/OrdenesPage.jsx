@@ -5,12 +5,19 @@ import { api } from "../lib/api";
 import Modal from "../components/Modal";
 import logoCge from "../../assets/logo.jpeg?inline";
 
-const AFIP_ISSUER_NAME = import.meta.env.VITE_AFIP_ISSUER_NAME || "Federico Zabala";
+const AFIP_ISSUER_NAME = import.meta.env.VITE_AFIP_ISSUER_NAME || "CGE Computacion";
 const AFIP_ISSUER_ADDRESS = import.meta.env.VITE_AFIP_ISSUER_ADDRESS || "Rivadavia 357";
 const AFIP_ISSUER_CITY = import.meta.env.VITE_AFIP_ISSUER_CITY || "Villa Ramallo";
+const AFIP_ISSUER_CUIL = import.meta.env.VITE_AFIP_ISSUER_CUIL || "20-30257623-9";
+const AFIP_ISSUER_IVA_CONDITION = import.meta.env.VITE_AFIP_ISSUER_IVA_CONDITION || "Responsable Inscripto";
 const WORKSHOP_COMPANY_NAME = import.meta.env.VITE_TALLER_RAZON_SOCIAL || AFIP_ISSUER_NAME || "CGE Computacion";
 const WORKSHOP_COMPANY_ADDRESS = import.meta.env.VITE_TALLER_DIRECCION || AFIP_ISSUER_ADDRESS || "-";
 const WORKSHOP_COMPANY_PHONE = import.meta.env.VITE_TALLER_TELEFONO || "3407411490";
+const AFIP_COMPROBANTE_CODE_BY_LETTER = {
+  A: "001",
+  B: "006",
+  C: "011"
+};
 
 const initialOrden = {
   cliente_id: "",
@@ -109,6 +116,11 @@ const resolveAfipComprobanteLabel = (value) => {
   return "FACTURA AFIP";
 };
 
+const resolveAfipComprobanteCode = (value) => {
+  const tipo = normalizeAfipComprobanteTipo(value);
+  return AFIP_COMPROBANTE_CODE_BY_LETTER[tipo || ""] || "011";
+};
+
 const formatOrderNumber = (value) => `#${String(value ?? "-").padStart(7, "0")}`;
 
 const roundMoney = (value) => Number(Number(value || 0).toFixed(2));
@@ -169,6 +181,51 @@ const printWhenReady = (printWindow) => {
 
   printWindow.addEventListener("load", tryPrint, { once: true });
   setTimeout(tryPrint, 200);
+};
+
+const buildVisualQrDataUrl = (value) => {
+  const seed = String(value || "CGE-COMPUTACION-QR");
+  const size = 21;
+  const cell = 5;
+  const margin = 4;
+  let hash = 0;
+
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) >>> 0;
+  }
+
+  const isFinder = (x, y, startX, startY) => x >= startX && x < startX + 7 && y >= startY && y < startY + 7;
+  const isFinderBorder = (x, y, startX, startY) => x === startX || x === startX + 6 || y === startY || y === startY + 6;
+  const isFinderCenter = (x, y, startX, startY) => x >= startX + 2 && x <= startX + 4 && y >= startY + 2 && y <= startY + 4;
+
+  let rects = "";
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const inTopLeft = isFinder(x, y, 0, 0);
+      const inTopRight = isFinder(x, y, size - 7, 0);
+      const inBottomLeft = isFinder(x, y, 0, size - 7);
+
+      let fill = false;
+      if (inTopLeft) {
+        fill = isFinderBorder(x, y, 0, 0) || isFinderCenter(x, y, 0, 0);
+      } else if (inTopRight) {
+        fill = isFinderBorder(x, y, size - 7, 0) || isFinderCenter(x, y, size - 7, 0);
+      } else if (inBottomLeft) {
+        fill = isFinderBorder(x, y, 0, size - 7) || isFinderCenter(x, y, 0, size - 7);
+      } else {
+        const bit = (hash ^ (x * 1103515245) ^ (y * 12345) ^ (x * y * 97)) & 1;
+        fill = bit === 1;
+      }
+
+      if (fill) {
+        rects += `<rect x="${margin + x * cell}" y="${margin + y * cell}" width="${cell}" height="${cell}" fill="#000"/>`;
+      }
+    }
+  }
+
+  const dimension = margin * 2 + size * cell;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${dimension}" height="${dimension}" viewBox="0 0 ${dimension} ${dimension}"><rect width="100%" height="100%" fill="#fff"/>${rects}</svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 };
 
 const renderAndPrintOrden = (orden) => {
@@ -372,6 +429,10 @@ const renderAndPrintFactura = ({ venta, orden, items }) => {
   const discriminaIva = isAfip && shouldDiscriminateAfipIva(facturaTipo);
   const comprobanteLabel = isAfip ? resolveAfipComprobanteLabel(facturaTipo) : "FACTURA LOCAL";
   const comprobanteNumero = venta?.comprobante?.numero || venta?.comprobante_numero || `LOCAL-${venta?.id || "-"}`;
+  const matches = String(comprobanteNumero).match(/(\d{4})-(\d{8})/);
+  const puntoVenta = matches?.[1] || "-";
+  const nroComprobante = matches?.[2] || String(comprobanteNumero).replace(/^AFIP-?/i, "") || "-";
+  const comprobanteCode = resolveAfipComprobanteCode(facturaTipo);
   const cae = isAfip ? venta?.comprobante?.cae || venta?.cae || "-" : "No corresponde";
   const caeVto = isAfip ? venta?.comprobante?.cae_vto || venta?.cae_vto || null : null;
   const subtotalBase = Number(venta?.subtotal ?? venta?.total ?? 0);
@@ -381,20 +442,28 @@ const renderAndPrintFactura = ({ venta, orden, items }) => {
   const subtotal = discriminaIva ? Math.max(total - ivaImporte, 0) : total;
   const clienteCuit = orden?.cliente_cuit || "-";
   const clienteCondicionIva = orden?.cliente_condicion_iva || "-";
+  const clienteNombre = orden?.cliente_nombre || "Consumidor final";
+  const clienteDomicilio = orden?.cliente_direccion || "-";
+  const condicionVenta = venta?.forma_pago ? String(venta.forma_pago).toUpperCase() : "-";
+  const visualQr = isAfip ? buildVisualQrDataUrl(`${facturaTipo}|${comprobanteNumero}|${cae}|${total.toFixed(2)}`) : "";
   const rows = (items || []).length
     ? (items || [])
         .map(
           (item) => `
             <tr>
+              <td></td>
               <td>${escapeHtml(item?.descripcion || "-")}</td>
               <td style="text-align:right;">${Number(item?.cantidad || 0).toFixed(2)}</td>
+              <td>unidades</td>
               <td style="text-align:right;">$${Number(item?.precio_unitario || 0).toFixed(2)}</td>
+              <td style="text-align:right;">0,00</td>
+              <td style="text-align:right;">0,00</td>
               <td style="text-align:right;">$${Number(item?.subtotal ?? Number(item?.cantidad || 0) * Number(item?.precio_unitario || 0)).toFixed(2)}</td>
             </tr>
           `
         )
         .join("")
-    : '<tr><td colspan="4" style="text-align:center;">Sin ítems.</td></tr>';
+    : '<tr><td colspan="8" style="text-align:center;">Sin items.</td></tr>';
 
   const html = `
     <!DOCTYPE html>
@@ -404,120 +473,161 @@ const renderAndPrintFactura = ({ venta, orden, items }) => {
         <title>${escapeHtml(comprobanteLabel)} ${escapeHtml(comprobanteNumero)}</title>
         <style>
           * { box-sizing: border-box; }
-          body { font-family: Arial, sans-serif; margin: 0; padding: 18px; background: #f3f4f6; color: #111827; }
-          .sheet { max-width: 860px; margin: 0 auto; background: #fff; border: 1px solid #1f2937; }
-          .header { display: grid; grid-template-columns: 1fr 220px; border-bottom: 1px solid #1f2937; }
-          .header-left { padding: 14px; border-right: 1px solid #1f2937; }
-          .header-right { padding: 14px; text-align: center; }
-          .brand { display: flex; gap: 10px; align-items: flex-start; }
-          .brand img { width: 88px; height: 88px; object-fit: contain; border: 1px solid #d1d5db; }
-          .brand h1 { margin: 0 0 4px; font-size: 22px; font-weight: 800; }
-          .muted { margin: 2px 0; font-size: 12px; color: #374151; }
-          .letter { border: 2px solid #111827; width: 46px; height: 46px; line-height: 42px; font-size: 28px; font-weight: 900; margin: 0 auto 8px; }
-          .title { margin: 0; font-size: 20px; font-weight: 800; }
-          .subtle { margin: 4px 0 0; font-size: 12px; }
-          .section { padding: 12px 14px; }
-          table { width: 100%; border-collapse: collapse; }
-          th, td { border: 1px solid #d1d5db; padding: 7px; font-size: 12px; }
-          th { background: #f9fafb; text-align: left; }
-          .totals { width: 320px; margin-left: auto; margin-top: 10px; }
-          .totals td { font-size: 13px; }
-          .totals .final td { background: #111827; color: #fff; font-weight: 800; }
-          .cae { margin-top: 12px; border: 1px solid #d1d5db; padding: 8px; background: #f9fafb; font-size: 12px; }
+          body { font-family: Arial, sans-serif; margin: 0; background: #fff; color: #000; }
+          .invoice { width: 210mm; min-height: 297mm; margin: 0 auto; padding: 4mm 3mm; }
+          .box { border: 1px solid #222; }
+          .original { text-align: center; font-weight: 700; font-size: 30px; padding: 4px 0 3px; margin-bottom: 2px; }
+          .header { display: grid; grid-template-columns: 1.3fr 85px 1.3fr; }
+          .header-col { border-right: 1px solid #222; min-height: 172px; padding: 6px 8px; }
+          .header-col:last-child { border-right: 0; }
+          .brand { display: flex; align-items: flex-start; gap: 9px; }
+          .brand img { width: 64px; height: 64px; object-fit: contain; }
+          .brand-title { font-size: 22px; font-weight: 700; margin: 0; line-height: 1.05; }
+          .seller-line { margin: 5px 0 0; font-size: 12px; }
+          .seller-line strong { font-size: 13px; }
+          .center-box { text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+          .center-box .letter { font-size: 62px; font-weight: 700; line-height: 0.9; }
+          .center-box .code { font-size: 18px; margin-top: 4px; font-weight: 700; }
+          .doc-title { text-align: left; font-size: 28px; font-weight: 700; margin: 2px 0 8px; }
+          .doc-line { margin: 5px 0; font-size: 14px; white-space: nowrap; }
+          .doc-line .doc-label { font-weight: 700; }
+          .row { border: 1px solid #222; border-top: 0; padding: 4px 8px; font-size: 12px; }
+          .row.grid-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+          .row p { margin: 2px 0; }
+          .items { width: 100%; border-collapse: collapse; margin-top: 2px; }
+          .items th, .items td { border: 1px solid #222; padding: 3px 4px; font-size: 11px; }
+          .items th { text-align: left; background: #f6f6f6; }
+          .items .num { text-align: right; }
+          .body-spacer { min-height: 145mm; border-left: 1px solid #222; border-right: 1px solid #222; border-bottom: 1px solid #222; }
+          .footer-box { border: 1px solid #222; border-top: 0; padding: 6px 8px; display: grid; grid-template-columns: 1fr 300px; gap: 12px; }
+          .cae { font-size: 18px; font-weight: 700; align-self: end; }
+          .cae p { margin: 2px 0; }
+          .totals { width: 100%; border-collapse: collapse; }
+          .totals td { border: 1px solid #222; padding: 4px 6px; font-size: 14px; }
+          .totals td:first-child { text-align: right; font-weight: 700; }
+          .totals td:last-child { text-align: right; width: 46%; }
+          .totals .final td { font-weight: 700; }
+          .bottom-strip { display: grid; grid-template-columns: 140px 1fr; align-items: end; gap: 18px; margin-top: 10px; }
+          .qr-block img { width: 110px; height: 110px; display: block; border: 1px solid #222; }
+          .qr-caption { margin: 6px 0 0; font-size: 11px; font-weight: 700; }
+          .bottom-note { text-align: left; }
+          .bottom-note p { margin: 0; font-size: 12px; }
+          .bottom-note .auth { margin-top: 6px; font-weight: 700; }
           @media print {
-            body { background: #fff; padding: 0; }
-            .sheet { max-width: 100%; border: none; }
+            @page { size: A4 portrait; margin: 0; }
+            body { margin: 0; }
           }
         </style>
       </head>
       <body>
-        <section class="sheet">
-          <header class="header">
-            <div class="header-left">
+        <section class="invoice">
+          <div class="box original">ORIGINAL</div>
+
+          <header class="box header">
+            <section class="header-col">
               <div class="brand">
                 <img src="${logoCge}" alt="Logo ${escapeHtml(WORKSHOP_COMPANY_NAME)}" />
                 <div>
-                  <h1>${escapeHtml(WORKSHOP_COMPANY_NAME)}</h1>
-                  <p class="muted">${escapeHtml(AFIP_ISSUER_NAME)}</p>
-                  <p class="muted">${escapeHtml(WORKSHOP_COMPANY_ADDRESS)}</p>
-                  <p class="muted">Tel: ${escapeHtml(WORKSHOP_COMPANY_PHONE)}</p>
+                  <p class="brand-title">${escapeHtml(WORKSHOP_COMPANY_NAME)}</p>
+                  <p class="seller-line"><strong>Razón Social:</strong> ${escapeHtml(AFIP_ISSUER_NAME)}</p>
+                  <p class="seller-line"><strong>Domicilio Comercial:</strong> ${escapeHtml(AFIP_ISSUER_ADDRESS)}, ${escapeHtml(AFIP_ISSUER_CITY)}</p>
+                  <p class="seller-line"><strong>Condición frente al IVA:</strong> ${escapeHtml(AFIP_ISSUER_IVA_CONDITION)}</p>
                 </div>
               </div>
-            </div>
-            <div class="header-right">
+            </section>
+
+            <section class="header-col center-box">
               <div class="letter">${escapeHtml(facturaTipo)}</div>
-              <h2 class="title">${escapeHtml(comprobanteLabel)}</h2>
-              <p class="subtle"><b>Número:</b> ${escapeHtml(comprobanteNumero)}</p>
-              <p class="subtle"><b>Fecha:</b> ${escapeHtml(dayjs(venta?.fecha || new Date()).format("DD/MM/YYYY HH:mm"))}</p>
-            </div>
+              <div class="code">COD. ${escapeHtml(comprobanteCode)}</div>
+            </section>
+
+            <section class="header-col">
+              <h2 class="doc-title">FACTURA</h2>
+              <p class="doc-line"><span class="doc-label">Punto de Venta:</span> ${escapeHtml(puntoVenta)} &nbsp;&nbsp; <span class="doc-label">Comp. Nro:</span> ${escapeHtml(nroComprobante)}</p>
+              <p class="doc-line"><span class="doc-label">Fecha de Emisión:</span> ${escapeHtml(dayjs(venta?.fecha || new Date()).format("DD/MM/YYYY"))}</p>
+              <p class="doc-line"><span class="doc-label">CUIT:</span> ${escapeHtml(AFIP_ISSUER_CUIL)}</p>
+              <p class="doc-line"><span class="doc-label">Condición de venta:</span> ${escapeHtml(condicionVenta)}</p>
+            </section>
           </header>
 
-          <section class="section">
-            <table>
-              <tbody>
-                <tr>
-                  <td><b>Cliente</b></td>
-                  <td>${escapeHtml(orden?.cliente_nombre || "Consumidor final")}</td>
-                  <td><b>CUIT</b></td>
-                  <td>${escapeHtml(clienteCuit)}</td>
-                </tr>
-                <tr>
-                  <td><b>Documento</b></td>
-                  <td>${escapeHtml(orden?.cliente_documento || "-")}</td>
-                  <td><b>Condición IVA</b></td>
-                  <td>${escapeHtml(clienteCondicionIva)}</td>
-                </tr>
-                <tr>
-                  <td><b>Orden reparación</b></td>
-                  <td>${escapeHtml(formatOrderNumber(orden?.nro_orden))}</td>
-                  <td><b>Equipo</b></td>
-                  <td>${escapeHtml(orden?.equipo || "-")}</td>
-                </tr>
-              </tbody>
-            </table>
+          <section class="row grid-two">
+            <div>
+              <p><strong>CUIT:</strong> ${escapeHtml(clienteCuit)}</p>
+              <p><strong>Condición frente al IVA:</strong> ${escapeHtml(clienteCondicionIva)}</p>
+              <p><strong>Orden reparación:</strong> ${escapeHtml(formatOrderNumber(orden?.nro_orden))}</p>
+            </div>
+            <div>
+              <p><strong>Apellido y Nombre / Razón Social:</strong> ${escapeHtml(clienteNombre)}</p>
+              <p><strong>Domicilio:</strong> ${escapeHtml(clienteDomicilio)}</p>
+              <p><strong>Equipo:</strong> ${escapeHtml(orden?.equipo || "-")}</p>
+            </div>
           </section>
 
-          <section class="section">
-            <table>
-              <thead>
-                <tr>
-                  <th>Descripción</th>
-                  <th style="text-align:right;">Cant.</th>
-                  <th style="text-align:right;">Precio unit.</th>
-                  <th style="text-align:right;">Subtotal</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rows}
-              </tbody>
-            </table>
+          <table class="items">
+            <thead>
+              <tr>
+                <th style="width: 6%;">Código</th>
+                <th style="width: 34%;">Producto / Servicio</th>
+                <th style="width: 11%;">Cantidad</th>
+                <th style="width: 9%;">U. Medida</th>
+                <th style="width: 14%;">Precio Unit.</th>
+                <th style="width: 10%;">% Bonif.</th>
+                <th style="width: 10%;">Imp. Bonif.</th>
+                <th style="width: 16%;">Subtotal</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows}
+            </tbody>
+          </table>
 
+          <div class="body-spacer"></div>
+
+          <section class="footer-box">
+            <div class="cae">
+              <p><strong>CAE N°:</strong> ${escapeHtml(cae)}</p>
+              <p><strong>Fecha de Vto. de CAE:</strong> ${escapeHtml(caeVto ? dayjs(caeVto).format("DD/MM/YYYY") : "-")}</p>
+            </div>
             <table class="totals">
               <tbody>
                 <tr>
-                  <td><b>Subtotal</b></td>
-                  <td style="text-align:right;">$${subtotal.toFixed(2)}</td>
+                  <td>Subtotal:</td>
+                  <td>$ ${subtotal.toFixed(2)}</td>
                 </tr>
                 ${
                   discriminaIva
                     ? `<tr>
-                  <td><b>IVA (${ivaAlicuota.toFixed(1)}%)</b></td>
-                  <td style="text-align:right;">$${ivaImporte.toFixed(2)}</td>
+                  <td>IVA (${ivaAlicuota.toFixed(1)}%):</td>
+                  <td>$ ${ivaImporte.toFixed(2)}</td>
                 </tr>`
                     : ""
                 }
+                <tr>
+                  <td>Importe Otros Tributos:</td>
+                  <td>$ 0.00</td>
+                </tr>
                 <tr class="final">
-                  <td><b>TOTAL</b></td>
-                  <td style="text-align:right;"><b>$${total.toFixed(2)}</b></td>
+                  <td>Importe Total:</td>
+                  <td>$ ${total.toFixed(2)}</td>
                 </tr>
               </tbody>
             </table>
-
-            <div class="cae">
-              <p class="muted" style="margin: 0;"><b>CAE:</b> ${escapeHtml(cae)}</p>
-              <p class="muted" style="margin: 3px 0 0;"><b>Vto. CAE:</b> ${escapeHtml(caeVto ? dayjs(caeVto).format("DD/MM/YYYY") : "-")}</p>
-            </div>
           </section>
+
+          ${
+            isAfip
+              ? `<section class="bottom-strip">
+              <div class="qr-block">
+                <img src="${visualQr}" alt="QR visual de factura" />
+                <p class="qr-caption">QR AFIP</p>
+              </div>
+              <div class="bottom-note">
+                <p class="auth">Comprobante Autorizado</p>
+                <p>Representacion visual del codigo QR de la factura.</p>
+              </div>
+            </section>`
+              : ""
+          }
         </section>
       </body>
     </html>

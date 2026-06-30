@@ -5,7 +5,7 @@ import { api } from "../lib/api";
 import Modal from "../components/Modal";
 import logoCge from "../../assets/logo.jpeg?inline";
 
-const AFIP_ISSUER_NAME = import.meta.env.VITE_AFIP_ISSUER_NAME || "Federico Zabala";
+const AFIP_ISSUER_NAME = import.meta.env.VITE_AFIP_ISSUER_NAME || "CGE Computacion";
 const AFIP_ISSUER_ADDRESS = import.meta.env.VITE_AFIP_ISSUER_ADDRESS || "Rivadavia 357";
 const AFIP_ISSUER_CITY = import.meta.env.VITE_AFIP_ISSUER_CITY || "Villa Ramallo";
 const AFIP_ISSUER_CUIL = import.meta.env.VITE_AFIP_ISSUER_CUIL || "20-30257623-9";
@@ -145,6 +145,51 @@ const printWhenReady = (printWindow) => {
   setTimeout(tryPrint, 200);
 };
 
+const buildVisualQrDataUrl = (value) => {
+  const seed = String(value || "CGE-COMPUTACION-QR");
+  const size = 21;
+  const cell = 5;
+  const margin = 4;
+  let hash = 0;
+
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) >>> 0;
+  }
+
+  const isFinder = (x, y, startX, startY) => x >= startX && x < startX + 7 && y >= startY && y < startY + 7;
+  const isFinderBorder = (x, y, startX, startY) => x === startX || x === startX + 6 || y === startY || y === startY + 6;
+  const isFinderCenter = (x, y, startX, startY) => x >= startX + 2 && x <= startX + 4 && y >= startY + 2 && y <= startY + 4;
+
+  let rects = "";
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const inTopLeft = isFinder(x, y, 0, 0);
+      const inTopRight = isFinder(x, y, size - 7, 0);
+      const inBottomLeft = isFinder(x, y, 0, size - 7);
+
+      let fill = false;
+      if (inTopLeft) {
+        fill = isFinderBorder(x, y, 0, 0) || isFinderCenter(x, y, 0, 0);
+      } else if (inTopRight) {
+        fill = isFinderBorder(x, y, size - 7, 0) || isFinderCenter(x, y, size - 7, 0);
+      } else if (inBottomLeft) {
+        fill = isFinderBorder(x, y, 0, size - 7) || isFinderCenter(x, y, 0, size - 7);
+      } else {
+        const bit = (hash ^ (x * 1103515245) ^ (y * 12345) ^ (x * y * 97)) & 1;
+        fill = bit === 1;
+      }
+
+      if (fill) {
+        rects += `<rect x="${margin + x * cell}" y="${margin + y * cell}" width="${cell}" height="${cell}" fill="#000"/>`;
+      }
+    }
+  }
+
+  const dimension = margin * 2 + size * cell;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${dimension}" height="${dimension}" viewBox="0 0 ${dimension} ${dimension}"><rect width="100%" height="100%" fill="#fff"/>${rects}</svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+};
+
 const renderAndPrintVentaComprobante = (venta) => {
   const printWindow = window.open("", "_blank", "width=900,height=780");
   if (!printWindow) {
@@ -169,6 +214,7 @@ const renderAndPrintVentaComprobante = (venta) => {
     const cae = venta?.cae || venta?.comprobante?.cae || "-";
     const caeVtoRaw = venta?.cae_vto || venta?.comprobante?.cae_vto || null;
     const caeVto = caeVtoRaw ? dayjs(caeVtoRaw).format("DD/MM/YYYY") : "-";
+    const visualQr = buildVisualQrDataUrl(`${afipTipo}|${comprobanteNumero}|${cae}|${total.toFixed(2)}`);
     const ivaAlicuota = Number(venta?.afip_iva_alicuota || 0);
     const ivaImporte = Number(venta?.afip_iva_importe ?? Math.max(total - subtotal, 0));
     const discriminaIva = shouldDiscriminateAfipIva(afipTipo);
@@ -216,19 +262,17 @@ const renderAndPrintVentaComprobante = (venta) => {
             .header-col:last-child { border-right: 0; }
             .brand { display: flex; align-items: flex-start; gap: 9px; }
             .brand img { width: 64px; height: 64px; object-fit: contain; }
-            .brand-title { font-size: 32px; font-weight: 700; margin: 0; line-height: 1.05; }
+            .brand-title { font-size: 22px; font-weight: 700; margin: 0; line-height: 1.05; }
             .seller-line { margin: 5px 0 0; font-size: 12px; }
-            .seller-line strong { font-size: 17px; }
+            .seller-line strong { font-size: 13px; }
             .center-box { text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; }
             .center-box .letter { font-size: 62px; font-weight: 700; line-height: 0.9; }
             .center-box .code { font-size: 18px; margin-top: 4px; font-weight: 700; }
-            .doc-title { text-align: left; font-size: 36px; font-weight: 700; margin: 2px 0 8px; }
-            .doc-line { margin: 5px 0; font-size: 16px; font-weight: 400; white-space: nowrap; }
+            .doc-title { text-align: left; font-size: 28px; font-weight: 700; margin: 2px 0 8px; }
+            .doc-line { margin: 5px 0; font-size: 14px; font-weight: 400; white-space: nowrap; }
             .doc-line .doc-label { font-weight: 700; }
-            .doc-line small { font-size: 16px; font-weight: 400; }
             .row { border: 1px solid #222; border-top: 0; padding: 4px 8px; font-size: 12px; }
             .row.grid-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-            .row.grid-three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
             .row p { margin: 2px 0; }
             .items { width: 100%; border-collapse: collapse; margin-top: 2px; }
             .items th, .items td { border: 1px solid #222; padding: 3px 4px; font-size: 11px; }
@@ -237,13 +281,19 @@ const renderAndPrintVentaComprobante = (venta) => {
             .items .empty-row { text-align: center; }
             .body-spacer { min-height: 145mm; border-left: 1px solid #222; border-right: 1px solid #222; border-bottom: 1px solid #222; }
             .footer-box { border: 1px solid #222; border-top: 0; margin-top: 0; padding: 6px 8px; display: grid; grid-template-columns: 1fr 300px; gap: 12px; }
-            .cae { font-size: 30px; font-weight: 700; align-self: end; }
+            .cae { font-size: 18px; font-weight: 700; align-self: end; }
             .cae p { margin: 2px 0; }
             .totals { width: 100%; border-collapse: collapse; }
-            .totals td { border: 1px solid #222; padding: 4px 6px; font-size: 16px; }
+            .totals td { border: 1px solid #222; padding: 4px 6px; font-size: 14px; }
             .totals td:first-child { text-align: right; font-weight: 700; }
             .totals td:last-child { text-align: right; width: 46%; }
             .totals .final td { font-weight: 700; }
+            .bottom-strip { display: grid; grid-template-columns: 140px 1fr; align-items: end; gap: 18px; margin-top: 10px; }
+            .qr-block img { width: 110px; height: 110px; display: block; border: 1px solid #222; }
+            .qr-caption { margin: 6px 0 0; font-size: 11px; font-weight: 700; }
+            .bottom-note { text-align: left; }
+            .bottom-note p { margin: 0; font-size: 12px; }
+            .bottom-note .auth { margin-top: 6px; font-weight: 700; }
             @media print {
               @page { size: A4 portrait; margin: 0; }
               body { margin: 0; }
@@ -257,13 +307,14 @@ const renderAndPrintVentaComprobante = (venta) => {
             <header class="box header">
               <section class="header-col">
                 <div class="brand">
-                  <img src="${logoCge}" alt="Logo" />
-                  <p class="brand-title">CGE</p>
+                  <img src="${logoCge}" alt="Logo ${escapeHtml(emisorNombre)}" />
+                  <div>
+                    <p class="brand-title">${escapeHtml(emisorNombre)}</p>
+                    <p class="seller-line"><strong>Razón Social:</strong> ${escapeHtml(AFIP_ISSUER_NAME)}</p>
+                    <p class="seller-line"><strong>Domicilio Comercial:</strong> ${escapeHtml(AFIP_ISSUER_ADDRESS)}, ${escapeHtml(AFIP_ISSUER_CITY)}</p>
+                    <p class="seller-line"><strong>Condición frente al IVA:</strong> ${escapeHtml(AFIP_ISSUER_IVA_CONDITION)}</p>
+                  </div>
                 </div>
-                <p class="brand-title" style="margin-top: 2px;">Computación</p>
-                <p class="seller-line"><strong>Razón Social:</strong> ${escapeHtml(AFIP_ISSUER_NAME)}</p>
-                <p class="seller-line"><strong>Domicilio Comercial:</strong> ${escapeHtml(AFIP_ISSUER_ADDRESS)}</p>
-                <p class="seller-line"><strong>Condición frente al IVA:</strong> ${escapeHtml(AFIP_ISSUER_IVA_CONDITION)}</p>
               </section>
 
               <section class="header-col center-box">
@@ -273,24 +324,17 @@ const renderAndPrintVentaComprobante = (venta) => {
 
               <section class="header-col">
                 <h2 class="doc-title">FACTURA</h2>
-                <p class="doc-line"><span class="doc-label">Punto de Venta:</span> ${escapeHtml(puntoVenta)} &nbsp;&nbsp; <span class="doc-label">Comp. Nro:</span> <small>${escapeHtml(nroComprobante)}</small></p>
-                <p class="doc-line"><span class="doc-label">Fecha de Emisión:</span> <small>${escapeHtml(dayjs(venta?.fecha || new Date()).format("DD/MM/YYYY"))}</small></p>
-                <p class="doc-line"><span class="doc-label">CUIT:</span> <small>${escapeHtml(AFIP_ISSUER_CUIL)}</small></p>
-                <p class="doc-line"><span class="doc-label">Fecha de Inicio de Actividades:</span> <small>01/02/2021</small></p>
+                <p class="doc-line"><span class="doc-label">Punto de Venta:</span> ${escapeHtml(puntoVenta)} &nbsp;&nbsp; <span class="doc-label">Comp. Nro:</span> ${escapeHtml(nroComprobante)}</p>
+                <p class="doc-line"><span class="doc-label">Fecha de Emisión:</span> ${escapeHtml(dayjs(venta?.fecha || new Date()).format("DD/MM/YYYY"))}</p>
+                <p class="doc-line"><span class="doc-label">CUIT:</span> ${escapeHtml(AFIP_ISSUER_CUIL)}</p>
+                <p class="doc-line"><span class="doc-label">Condición de venta:</span> ${escapeHtml(condicionVenta)}</p>
               </section>
             </header>
-
-            <section class="row grid-three">
-              <p><strong>Período Facturado Desde:</strong> 01/04/2026</p>
-              <p><strong>Hasta:</strong> 30/04/2026</p>
-              <p><strong>Fecha de Vto. para el pago:</strong> 10/05/2026</p>
-            </section>
 
             <section class="row grid-two">
               <div>
                 <p><strong>CUIT:</strong> ${escapeHtml(clienteCuit)}</p>
                 <p><strong>Condición frente al IVA:</strong> ${escapeHtml(clienteCondicionIvaLabel)}</p>
-                <p><strong>Condición de venta:</strong> ${escapeHtml(condicionVenta)}</p>
               </div>
               <div>
                 <p><strong>Apellido y Nombre / Razón Social:</strong> ${escapeHtml(clienteRazonSocial)}</p>
@@ -347,6 +391,17 @@ const renderAndPrintVentaComprobante = (venta) => {
                   </tr>
                 </tbody>
               </table>
+            </section>
+
+            <section class="bottom-strip">
+              <div class="qr-block">
+                <img src="${visualQr}" alt="QR visual de factura" />
+                <p class="qr-caption">QR AFIP</p>
+              </div>
+              <div class="bottom-note">
+                <p class="auth">Comprobante Autorizado</p>
+                <p>Representacion visual del codigo QR de la factura.</p>
+              </div>
             </section>
           </section>
         </body>
