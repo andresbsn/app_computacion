@@ -907,6 +907,201 @@ const buildTechnicalReportPdfBuffer = ({ venta, comprobante, orden, cliente, tot
   return Buffer.from(pdf, "binary");
 };
 
+const buildVentaReceiptPdfBuffer = ({ venta, comprobante, cliente, orden, itemsFacturados = [] }) => {
+  const streamCommands = [];
+  const pageWidth = 595;
+  const margin = 40;
+  const right = pageWidth - margin;
+  const isAfipComprobante = String(comprobante?.tipo || "").toLowerCase() === "afip";
+  const afipTipo = normalizeComprobanteAfipTipo(comprobante?.afip_tipo_comprobante);
+  const comprobanteLabel = isAfipComprobante ? resolveAfipComprobanteLabel(afipTipo) : "COMPROBANTE DE PAGO";
+  const saldoPendiente = Number(venta?.saldo_pendiente || 0);
+  const subtotal = Number(venta?.subtotal || 0);
+  const ivaImporte = Number(venta?.afip_iva_importe || 0);
+  const total = Number(venta?.total || 0);
+
+  const wrapText = (value, maxChars = 74) => {
+    const normalized = String(value || "-").replace(/\s+/g, " ").trim();
+    if (!normalized) {
+      return ["-"];
+    }
+
+    const words = normalized.split(" ");
+    const result = [];
+    let current = "";
+
+    for (const word of words) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (candidate.length <= maxChars) {
+        current = candidate;
+      } else {
+        if (current) {
+          result.push(current);
+        }
+        current = word;
+      }
+    }
+
+    if (current) {
+      result.push(current);
+    }
+
+    return result.length ? result : ["-"];
+  };
+
+  const pushText = (x, y, size, value, bold = false) => {
+    streamCommands.push("BT");
+    streamCommands.push(`/${bold ? "F2" : "F1"} ${size} Tf`);
+    streamCommands.push(`${x.toFixed(2)} ${y.toFixed(2)} Td`);
+    streamCommands.push(`(${escapePdfText(value)}) Tj`);
+    streamCommands.push("ET");
+  };
+
+  const pushHLine = (y) => {
+    streamCommands.push(`${margin} ${y.toFixed(2)} m ${right} ${y.toFixed(2)} l S`);
+  };
+
+  let y = 800;
+  pushText(margin, y, 17, comprobanteLabel, true);
+  pushText(370, y + 1, 11, `Nro ${comprobante?.numero || venta?.id || "-"}`, true);
+  y -= 20;
+  pushText(margin, y, 10, String(config.workshop.companyName || "Taller"), true);
+  pushText(370, y, 10, `Fecha ${formatDateOnly(comprobante?.fecha_emision || venta?.fecha)}`);
+  y -= 14;
+  pushHLine(y);
+  y -= 18;
+
+  const rightColX = 310;
+  const writeRow = (leftLabel, leftValue, rightLabel, rightValue) => {
+    pushText(margin, y, 10, `${leftLabel}:`, true);
+    pushText(margin + 78, y, 10, leftValue || "-");
+    pushText(rightColX, y, 10, `${rightLabel}:`, true);
+    pushText(rightColX + 78, y, 10, rightValue || "-");
+    y -= 16;
+  };
+
+  writeRow("Cliente", String(cliente?.nombre || "Consumidor final"), "Pago", String(venta?.forma_pago || "-").toUpperCase());
+  writeRow("Documento", String(cliente?.documento || "-"), "CUIT", String(cliente?.cuit || "-"));
+  writeRow("Email", String(cliente?.email || "-"), "Origen", String(venta?.origen || "-").toUpperCase());
+  if (orden?.nro_orden) {
+    writeRow("Orden", String(orden.nro_orden), "Equipo", String(orden.equipo || "-"));
+  }
+
+  if (cliente?.direccion) {
+    wrapText(`Direccion: ${cliente.direccion}`, 92).forEach((line) => {
+      pushText(margin, y, 10, line);
+      y -= 14;
+    });
+  }
+
+  y -= 2;
+  pushHLine(y);
+  y -= 18;
+
+  streamCommands.push("0.92 g");
+  streamCommands.push(`${margin} ${(y - 13).toFixed(2)} ${right - margin} 18 re f`);
+  streamCommands.push("0 g");
+  pushText(margin + 6, y - 1, 10, "DETALLE", true);
+  y -= 24;
+
+  const descriptionX = margin + 6;
+  const qtyX = 365;
+  const priceX = 430;
+  const subtotalX = 500;
+  pushText(descriptionX, y, 9, "Descripcion", true);
+  pushText(qtyX, y, 9, "Cant.", true);
+  pushText(priceX, y, 9, "P.Unit.", true);
+  pushText(subtotalX, y, 9, "Subtotal", true);
+  y -= 12;
+  pushHLine(y);
+  y -= 14;
+
+  const items = itemsFacturados.length
+    ? itemsFacturados
+    : [{ descripcion: "Sin items registrados", cantidad: 1, precio_unitario: total, subtotal: total }];
+
+  for (const item of items) {
+    const lines = wrapText(item.descripcion || "-", 48);
+    lines.forEach((line, index) => {
+      if (y < 150) {
+        return;
+      }
+
+      pushText(descriptionX, y, 9, line);
+      if (index === 0) {
+        pushText(qtyX, y, 9, Number(item.cantidad || 0).toFixed(2));
+        pushText(priceX, y, 9, formatCurrency(item.precio_unitario || 0));
+        pushText(subtotalX, y, 9, formatCurrency(item.subtotal || 0));
+      }
+      y -= 12;
+    });
+
+    if (y < 150) {
+      break;
+    }
+  }
+
+  if (y < 150) {
+    pushText(descriptionX, 138, 9, "... (detalle truncado)");
+    y = 128;
+  }
+
+  y -= 4;
+  pushHLine(y);
+  y -= 24;
+
+  const totalsBoxX = right - 220;
+  const writeTotal = (label, value, bold = false) => {
+    pushText(totalsBoxX, y, 10, label, bold);
+    pushText(totalsBoxX + 118, y, 10, value, bold);
+    y -= 15;
+  };
+
+  writeTotal("Subtotal", formatCurrency(subtotal));
+  if (isAfipComprobante && ivaImporte > 0) {
+    writeTotal(`IVA ${Number(venta?.afip_iva_alicuota || 0).toFixed(1)}%`, formatCurrency(ivaImporte));
+  }
+  writeTotal("Total", formatCurrency(total), true);
+  writeTotal("Saldo pendiente", formatCurrency(saldoPendiente));
+
+  if (isAfipComprobante) {
+    y -= 6;
+    pushText(margin, y, 10, `CAE: ${comprobante?.cae || "-"}`, true);
+    y -= 14;
+    pushText(margin, y, 10, `Vto. CAE: ${formatDateOnly(comprobante?.cae_vto)}`);
+  }
+
+  const stream = `${streamCommands.join("\n")}\n`;
+  const streamLength = Buffer.byteLength(stream, "binary");
+
+  const objects = [
+    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>\nendobj\n",
+    "4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+    "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj\n",
+    `6 0 obj\n<< /Length ${streamLength} >>\nstream\n${stream}endstream\nendobj\n`
+  ];
+
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+
+  for (const obj of objects) {
+    offsets.push(Buffer.byteLength(pdf, "binary"));
+    pdf += obj;
+  }
+
+  const xrefOffset = Buffer.byteLength(pdf, "binary");
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += "0000000000 65535 f \n";
+  for (let i = 1; i <= objects.length; i += 1) {
+    pdf += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+  }
+
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return Buffer.from(pdf, "binary");
+};
+
 const mapEstadoToLabel = (estado) => {
   const labels = {
     ingresada: "Ingresada",
@@ -1194,13 +1389,18 @@ const buildAfipInvoiceHtml = ({ venta, comprobante, cliente, itemsFacturados = [
   `;
 };
 
-const getTechnicalReportContext = async (ventaId) => {
+const getVentaEmailContext = async (ventaId) => {
   const ventaResult = await pool.query(
     `
       SELECT
         v.id,
+        v.tipo,
+        v.origen,
         v.fecha,
         v.subtotal,
+        v.descuento,
+        v.impuestos,
+        v.forma_pago,
         v.afip_iva_alicuota,
         v.afip_iva_importe,
         v.total,
@@ -1221,12 +1421,13 @@ const getTechnicalReportContext = async (ventaId) => {
         c.email AS cliente_email,
         c.documento AS cliente_documento,
         c.cuit AS cliente_cuit,
-        c.condicion_iva AS cliente_condicion_iva
+        c.condicion_iva AS cliente_condicion_iva,
+        c.direccion AS cliente_direccion
       FROM ${schema}.ventas v
-      JOIN ${schema}.ordenes_reparacion o ON o.id = v.orden_id
-      LEFT JOIN ${schema}.clientes c ON c.id = o.cliente_id
+      LEFT JOIN ${schema}.ordenes_reparacion o ON o.id = v.orden_id
+      LEFT JOIN ${schema}.clientes c ON c.id = COALESCE(v.cliente_id, o.cliente_id)
       LEFT JOIN ${schema}.comprobantes cb ON cb.venta_id = v.id
-      WHERE v.id = $1 AND v.origen = 'orden'
+      WHERE v.id = $1
       ORDER BY cb.id DESC
       LIMIT 1
     `,
@@ -1262,8 +1463,13 @@ const getTechnicalReportContext = async (ventaId) => {
   return {
     venta: {
       id: row.id,
+      tipo: row.tipo,
+      origen: row.origen,
       fecha: row.fecha,
       subtotal: Number(row.subtotal || 0),
+      descuento: Number(row.descuento || 0),
+      impuestos: Number(row.impuestos || 0),
+      forma_pago: row.forma_pago,
       afip_iva_alicuota: row.afip_iva_alicuota,
       afip_iva_importe: Number(row.afip_iva_importe || 0),
       total: Number(row.total || 0)
@@ -1290,14 +1496,24 @@ const getTechnicalReportContext = async (ventaId) => {
       email: row.cliente_email,
       documento: row.cliente_documento,
       cuit: row.cliente_cuit,
-      condicion_iva: row.cliente_condicion_iva
+      condicion_iva: row.cliente_condicion_iva,
+      direccion: row.cliente_direccion
     },
     detalle_facturado: detalleFacturado,
     items_facturados: itemsFacturados
   };
 };
 
-const sendTechnicalReportEmail = async (report) => {
+const getTechnicalReportContext = async (ventaId) => {
+  const report = await getVentaEmailContext(ventaId);
+  if (!report || report.venta.origen !== "orden") {
+    return null;
+  }
+
+  return report;
+};
+
+const sendVentaEmail = async (report) => {
   if (!report?.cliente?.email) {
     return { sent: false, reason: "cliente_sin_email" };
   }
@@ -1307,66 +1523,50 @@ const sendTechnicalReportEmail = async (report) => {
     return { sent: false, reason: "smtp_no_configurado" };
   }
 
-  const isAfipComprobante = String(report?.comprobante?.tipo || "").toLowerCase() === "afip" && Boolean(report?.comprobante?.cae);
-
-  if (isAfipComprobante) {
-    const html = buildAfipInvoiceHtml({
-      venta: report.venta,
-      comprobante: report.comprobante,
-      cliente: report.cliente,
-      itemsFacturados: report.items_facturados
-    });
-    const comprobanteLabel = resolveAfipComprobanteLabel(report.comprobante.afip_tipo_comprobante);
-
-    await transporter.sendMail({
-      from: config.smtp.from,
-      to: report.cliente.email,
-      subject: `${comprobanteLabel} ${report.comprobante.numero} - Orden ${report.orden.nro_orden}`,
-      text: `Adjuntamos su ${comprobanteLabel} ${report.comprobante.numero}. Total: ${formatCurrency(report.venta.total)}.`,
-      html,
-      attachments: [
-        {
-          filename: `factura-afip-${report.comprobante.numero || report.venta.id}.html`,
-          content: html,
-          contentType: "text/html; charset=utf-8"
-        }
-      ]
-    });
-
-    return { sent: true, to: report.cliente.email, document_type: "factura_afip" };
-  }
-
+  const isAfipComprobante = String(report?.comprobante?.tipo || "").toLowerCase() === "afip";
+  const comprobanteLabel = isAfipComprobante
+    ? resolveAfipComprobanteLabel(report.comprobante.afip_tipo_comprobante)
+    : "Comprobante de pago";
+  const orderLine = report?.orden?.nro_orden ? `<p><b>Orden:</b> ${escapeHtml(report.orden.nro_orden)}</p>` : "";
+  const saldoLine = Number(report?.venta?.saldo_pendiente || 0)
+    ? `<p><b>Saldo pendiente:</b> ${escapeHtml(formatCurrency(report.venta.saldo_pendiente))}</p>`
+    : "";
   const html = `
     <p>Hola ${escapeHtml(report.cliente.nombre || "cliente")},</p>
-    <p>Tu orden <b>N° ${escapeHtml(report.orden.nro_orden || "-")}</b> ya esta lista para retirar.</p>
-    <p>Adjuntamos el comprobante en PDF.</p>
-    <p>Total: <b>${escapeHtml(formatCurrency(report.venta.total))}</b></p>
+    <p>Adjuntamos el comprobante de tu venta.</p>
+    <p><b>Comprobante:</b> ${escapeHtml(comprobanteLabel)} ${escapeHtml(report.comprobante.numero || String(report.venta.id || "-"))}</p>
+    ${orderLine}
+    <p><b>Forma de pago:</b> ${escapeHtml(String(report.venta.forma_pago || "-").toUpperCase())}</p>
+    <p><b>Total:</b> ${escapeHtml(formatCurrency(report.venta.total))}</p>
+    ${saldoLine}
   `;
-  const pdfBuffer = buildTechnicalReportPdfBuffer({
+  const pdfBuffer = buildVentaReceiptPdfBuffer({
     venta: report.venta,
     comprobante: report.comprobante,
-    orden: report.orden,
     cliente: report.cliente,
-    total: report.venta.total,
-    detalleFacturado: report.detalle_facturado
+    orden: report.orden,
+    itemsFacturados: report.items_facturados
   });
+  const subjectSuffix = report?.orden?.nro_orden ? ` - Orden ${report.orden.nro_orden}` : "";
 
   await transporter.sendMail({
     from: config.smtp.from,
     to: report.cliente.email,
-    subject: `Nº ${report.orden.nro_orden} - lista para retirar`,
-    text: `Tu orden ${report.orden.nro_orden} ya está lista para retirar. Adjuntamos el comprobante generado. Total: ${formatCurrency(report.venta.total)}.`,
+    subject: `${comprobanteLabel} ${report.comprobante.numero || report.venta.id}${subjectSuffix}`,
+    text: `Adjuntamos el comprobante de tu venta ${report.comprobante.numero || report.venta.id}. Total: ${formatCurrency(
+      report.venta.total
+    )}.`,
     html,
     attachments: [
       {
-        filename: `informe-tecnico-orden-${report.orden.nro_orden}.pdf`,
+        filename: `comprobante-${String(report.comprobante.numero || report.venta.id).replace(/[^a-zA-Z0-9-_]/g, "_")}.pdf`,
         content: pdfBuffer,
         contentType: "application/pdf"
       }
     ]
   });
 
-  return { sent: true, to: report.cliente.email, document_type: "informe_tecnico" };
+  return { sent: true, to: report.cliente.email, document_type: isAfipComprobante ? "factura_pdf" : "comprobante_pdf" };
 };
 
 const handleZodError = (error, res) => {
@@ -2519,23 +2719,24 @@ app.post("/ventas", async (req, res) => {
     }
 
     let reporteTecnicoEmail = null;
-    if (venta.origen === "orden") {
+    if (venta.cliente_id) {
       try {
-        const technicalReport = await getTechnicalReportContext(venta.id);
-        if (technicalReport) {
-          reporteTecnicoEmail = await sendTechnicalReportEmail(technicalReport);
+        const ventaEmailContext = await getVentaEmailContext(venta.id);
+        if (ventaEmailContext) {
+          ventaEmailContext.venta.saldo_pendiente = Number(venta.saldo_pendiente || 0);
+          reporteTecnicoEmail = await sendVentaEmail(ventaEmailContext);
           if (!reporteTecnicoEmail.sent) {
             console.warn(
-              `[email][orden] No enviado para venta ${venta.id} / orden ${technicalReport.orden.nro_orden}. reason=${reporteTecnicoEmail.reason}`
+              `[email][venta] No enviado para venta ${venta.id}. reason=${reporteTecnicoEmail.reason}`
             );
           }
         } else {
           reporteTecnicoEmail = { sent: false, reason: "reporte_no_encontrado" };
-          console.warn(`[email][orden] No enviado para venta ${venta.id}. reason=reporte_no_encontrado`);
+          console.warn(`[email][venta] No enviado para venta ${venta.id}. reason=reporte_no_encontrado`);
         }
       } catch (mailError) {
         reporteTecnicoEmail = { sent: false, reason: "email_error", message: mailError.message };
-        console.error(`[email][orden] Error enviando para venta ${venta.id}:`, mailError);
+        console.error(`[email][venta] Error enviando para venta ${venta.id}:`, mailError);
       }
     }
 
