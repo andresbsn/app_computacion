@@ -7,9 +7,11 @@ import VentasPage from "./pages/VentasPage";
 import ConfiguracionPage from "./pages/ConfiguracionPage";
 import ProgramarTareaPage from "./pages/ProgramarTareaPage";
 import LoginPage from "./pages/LoginPage";
+import DashboardPage from "./pages/DashboardPage";
 import { useAuth } from "./lib/auth-context";
 
 const navItems = [
+  { to: "/dashboard", label: "Dashboard" },
   { to: "/clientes", label: "Clientes" },
   { to: "/productos", label: "Productos" },
   { to: "/ordenes", label: "Ordenes" },
@@ -58,7 +60,8 @@ function ProtectedShell() {
 
       <main className="content">
         <Routes>
-          <Route path="/" element={<Navigate to="/clientes" replace />} />
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/clientes" element={<ClientesPage />} />
           <Route path="/productos" element={<ProductosPage />} />
           <Route path="/ordenes" element={<OrdenesPage />} />
@@ -80,7 +83,7 @@ function App() {
 
   return (
     <Routes>
-      <Route path="/login" element={isAuthenticated ? <Navigate to="/clientes" replace /> : <LoginPage />} />
+      <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
       <Route path="/*" element={isAuthenticated ? <ProtectedShell /> : <Navigate to="/login" replace />} />
     </Routes>
   );
