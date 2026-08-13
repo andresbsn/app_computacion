@@ -5,12 +5,15 @@ import { api } from "../lib/api";
 import Modal from "../components/Modal";
 import logoCge from "../../assets/logo.jpeg?inline";
 
-const AFIP_ISSUER_NAME = import.meta.env.VITE_AFIP_ISSUER_NAME || "CGE Computacion";
+const AFIP_ISSUER_NAME = import.meta.env.VITE_AFIP_ISSUER_NAME || "ZABALA FEDERICO MIGUEL";
 const AFIP_ISSUER_ADDRESS = import.meta.env.VITE_AFIP_ISSUER_ADDRESS || "Rivadavia 357";
-const AFIP_ISSUER_CITY = import.meta.env.VITE_AFIP_ISSUER_CITY || "Villa Ramallo";
-const AFIP_ISSUER_CUIL = import.meta.env.VITE_AFIP_ISSUER_CUIL || "20-30257623-9";
-const AFIP_ISSUER_IVA_CONDITION = import.meta.env.VITE_AFIP_ISSUER_IVA_CONDITION || "Responsable Inscripto";
-const WORKSHOP_COMPANY_NAME = import.meta.env.VITE_TALLER_RAZON_SOCIAL || AFIP_ISSUER_NAME || "CGE Computacion";
+const AFIP_ISSUER_CITY = import.meta.env.VITE_AFIP_ISSUER_CITY || "Villa Ramallo, Buenos Aires";
+const AFIP_ISSUER_CUIL = import.meta.env.VITE_AFIP_ISSUER_CUIL || "20302576239";
+const AFIP_ISSUER_GROSS_INCOME = import.meta.env.VITE_AFIP_ISSUER_GROSS_INCOME || AFIP_ISSUER_CUIL;
+const AFIP_ISSUER_ACTIVITY_START = import.meta.env.VITE_AFIP_ISSUER_ACTIVITY_START || "01/08/2020";
+const AFIP_ISSUER_IVA_CONDITION = import.meta.env.VITE_AFIP_ISSUER_IVA_CONDITION || "IVA Responsable Inscripto";
+const AFIP_INVOICE_LEGEND = import.meta.env.VITE_AFIP_INVOICE_LEGEND || '"Insumos - Servicio Tecnico"';
+const WORKSHOP_COMPANY_NAME = import.meta.env.VITE_TALLER_RAZON_SOCIAL || "CGE ELECTRONICA";
 const WORKSHOP_COMPANY_ADDRESS = import.meta.env.VITE_TALLER_DIRECCION || AFIP_ISSUER_ADDRESS || "-";
 const WORKSHOP_COMPANY_PHONE = import.meta.env.VITE_TALLER_TELEFONO || "3407411490";
 const AFIP_COMPROBANTE_CODE_BY_LETTER = {
@@ -119,6 +122,19 @@ const resolveAfipComprobanteLabel = (value) => {
 const resolveAfipComprobanteCode = (value) => {
   const tipo = normalizeAfipComprobanteTipo(value);
   return AFIP_COMPROBANTE_CODE_BY_LETTER[tipo || ""] || "011";
+};
+
+const formatAfipMoney = (value) =>
+  Number(value || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false });
+
+const formatAfipQty = (value) =>
+  Number(value || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false });
+
+const formatClienteCondicionIvaLabel = (value) => {
+  const normalized = normalizeClienteCondicionIva(value);
+  if (normalized === "inscripto") return "IVA Responsable Inscripto";
+  if (normalized === "exento") return "IVA Sujeto Exento";
+  return "Consumidor Final";
 };
 
 const formatOrderNumber = (value) => `#${String(value ?? "-").padStart(7, "0")}`;
@@ -441,29 +457,50 @@ const renderAndPrintFactura = ({ venta, orden, items }) => {
   const total = Number(venta?.total ?? subtotalBase + ivaImporte);
   const subtotal = discriminaIva ? Math.max(total - ivaImporte, 0) : total;
   const clienteCuit = orden?.cliente_cuit || "-";
-  const clienteCondicionIva = orden?.cliente_condicion_iva || "-";
+  const clienteCondicionIva = formatClienteCondicionIvaLabel(orden?.cliente_condicion_iva);
   const clienteNombre = orden?.cliente_nombre || "Consumidor final";
   const clienteDomicilio = orden?.cliente_direccion || "-";
-  const condicionVenta = venta?.forma_pago ? String(venta.forma_pago).toUpperCase() : "-";
+  const condicionVenta = venta?.forma_pago ? String(venta.forma_pago).toLowerCase() === "efectivo" ? "Contado" : String(venta.forma_pago) : "Contado";
   const visualQr = isAfip ? buildVisualQrDataUrl(`${facturaTipo}|${comprobanteNumero}|${cae}|${total.toFixed(2)}`) : "";
+  const fechaEmision = dayjs(venta?.fecha || new Date()).format("DD/MM/YYYY");
+  const ivaContenido = !discriminaIva && ivaAlicuota > 0 ? total * (ivaAlicuota / (100 + ivaAlicuota)) : 0;
   const rows = (items || []).length
     ? (items || [])
-        .map(
-          (item) => `
-            <tr>
-              <td></td>
-              <td>${escapeHtml(item?.descripcion || "-")}</td>
-              <td style="text-align:right;">${Number(item?.cantidad || 0).toFixed(2)}</td>
-              <td>unidades</td>
-              <td style="text-align:right;">$${Number(item?.precio_unitario || 0).toFixed(2)}</td>
-              <td style="text-align:right;">0,00</td>
-              <td style="text-align:right;">0,00</td>
-              <td style="text-align:right;">$${Number(item?.subtotal ?? Number(item?.cantidad || 0) * Number(item?.precio_unitario || 0)).toFixed(2)}</td>
-            </tr>
-          `
-        )
+        .map((item) => {
+          const cantidad = Number(item?.cantidad || 0);
+          const itemTotal = Number(item?.subtotal ?? cantidad * Number(item?.precio_unitario || 0));
+          const itemNeto = discriminaIva && ivaAlicuota > 0 ? itemTotal / (1 + ivaAlicuota / 100) : itemTotal;
+          const precioUnitario = cantidad > 0 ? itemNeto / cantidad : itemNeto;
+
+          return discriminaIva
+            ? `
+             <tr>
+               <td></td>
+               <td>${escapeHtml(item?.descripcion || "-")}</td>
+              <td class="num">${formatAfipQty(cantidad)}</td>
+               <td>unidades</td>
+              <td class="num">${formatAfipMoney(precioUnitario)}</td>
+              <td class="num">0,00</td>
+              <td class="num">${formatAfipMoney(itemNeto)}</td>
+              <td class="num">${formatAfipMoney(ivaAlicuota)}%</td>
+              <td class="num">${formatAfipMoney(itemTotal)}</td>
+             </tr>
+            `
+            : `
+              <tr>
+                <td></td>
+                <td>${escapeHtml(item?.descripcion || "-")}</td>
+                <td class="num">${formatAfipQty(cantidad)}</td>
+                <td>unidades</td>
+                <td class="num">${formatAfipMoney(cantidad > 0 ? itemTotal / cantidad : itemTotal)}</td>
+                <td class="num">0,00</td>
+                <td class="num">0,00</td>
+                <td class="num">${formatAfipMoney(itemTotal)}</td>
+              </tr>
+            `;
+        })
         .join("")
-    : '<tr><td colspan="8" style="text-align:center;">Sin items.</td></tr>';
+    : `<tr><td colspan="${discriminaIva ? 9 : 8}" style="text-align:center;">Sin items.</td></tr>`;
 
   const html = `
     <!DOCTYPE html>
@@ -474,45 +511,46 @@ const renderAndPrintFactura = ({ venta, orden, items }) => {
         <style>
           * { box-sizing: border-box; }
           body { font-family: Arial, sans-serif; margin: 0; background: #fff; color: #000; }
-          .invoice { width: 210mm; min-height: 297mm; margin: 0 auto; padding: 4mm 3mm; }
+          .invoice { width: 210mm; min-height: 297mm; margin: 0 auto; padding: 4mm 3.5mm; }
           .box { border: 1px solid #222; }
-          .original { text-align: center; font-weight: 700; font-size: 30px; padding: 4px 0 3px; margin-bottom: 2px; }
+          .original { text-align: center; font-weight: 700; font-size: 18px; padding: 4px 0 5px; }
           .header { display: grid; grid-template-columns: 1.3fr 85px 1.3fr; }
-          .header-col { border-right: 1px solid #222; min-height: 172px; padding: 6px 8px; }
+          .header-col { border-right: 1px solid #222; min-height: 120px; padding: 8px; }
           .header-col:last-child { border-right: 0; }
-          .brand { display: flex; align-items: flex-start; gap: 9px; }
-          .brand img { width: 64px; height: 64px; object-fit: contain; }
-          .brand-title { font-size: 22px; font-weight: 700; margin: 0; line-height: 1.05; }
-          .seller-line { margin: 5px 0 0; font-size: 12px; }
-          .seller-line strong { font-size: 13px; }
+          .brand-title { font-size: 14px; font-weight: 700; text-align: center; margin: 10px 0 24px; }
+          .seller-line { margin: 8px 0 0; font-size: 11px; }
+          .seller-line strong { font-size: 11px; }
           .center-box { text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-          .center-box .letter { font-size: 62px; font-weight: 700; line-height: 0.9; }
-          .center-box .code { font-size: 18px; margin-top: 4px; font-weight: 700; }
-          .doc-title { text-align: left; font-size: 28px; font-weight: 700; margin: 2px 0 8px; }
-          .doc-line { margin: 5px 0; font-size: 14px; white-space: nowrap; }
+          .center-box .letter { font-size: 40px; font-weight: 700; line-height: 0.9; }
+          .center-box .code { font-size: 11px; margin-top: 4px; font-weight: 700; }
+          .doc-title { text-align: left; font-size: 26px; font-weight: 700; margin: 0 0 16px; }
+          .doc-line { margin: 6px 0; font-size: 12px; white-space: nowrap; }
           .doc-line .doc-label { font-weight: 700; }
-          .row { border: 1px solid #222; border-top: 0; padding: 4px 8px; font-size: 12px; }
-          .row.grid-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-          .row p { margin: 2px 0; }
+          .period { border-left: 1px solid #222; border-right: 1px solid #222; border-bottom: 1px solid #222; display: grid; grid-template-columns: 1fr 1fr 1.3fr; padding: 4px 8px; font-size: 12px; font-weight: 700; }
+          .row { border: 1px solid #222; border-top: 0; padding: 4px 8px; font-size: 11px; }
+          .row.grid-two { display: grid; grid-template-columns: 1fr 1.6fr; gap: 10px; }
+          .row p { margin: 5px 0; }
           .items { width: 100%; border-collapse: collapse; margin-top: 2px; }
           .items th, .items td { border: 1px solid #222; padding: 3px 4px; font-size: 11px; }
-          .items th { text-align: left; background: #f6f6f6; }
+          .items th { text-align: left; background: #cfcfcf; font-size: 10px; }
           .items .num { text-align: right; }
-          .body-spacer { min-height: 145mm; border-left: 1px solid #222; border-right: 1px solid #222; border-bottom: 1px solid #222; }
-          .footer-box { border: 1px solid #222; border-top: 0; padding: 6px 8px; display: grid; grid-template-columns: 1fr 300px; gap: 12px; }
-          .cae { font-size: 18px; font-weight: 700; align-self: end; }
-          .cae p { margin: 2px 0; }
+          .body-spacer { min-height: 122mm; border-left: 1px solid #222; border-right: 1px solid #222; }
+          .footer-box { border: 1px solid #222; padding: 6px 8px; display: grid; grid-template-columns: 1fr 310px; gap: 12px; align-items: end; }
           .totals { width: 100%; border-collapse: collapse; }
-          .totals td { border: 1px solid #222; padding: 4px 6px; font-size: 14px; }
+          .totals td { border: 0; padding: 2px 4px; font-size: 11px; font-weight: 700; }
           .totals td:first-child { text-align: right; font-weight: 700; }
           .totals td:last-child { text-align: right; width: 46%; }
           .totals .final td { font-weight: 700; }
-          .bottom-strip { display: grid; grid-template-columns: 140px 1fr; align-items: end; gap: 18px; margin-top: 10px; }
-          .qr-block img { width: 110px; height: 110px; display: block; border: 1px solid #222; }
-          .qr-caption { margin: 6px 0 0; font-size: 11px; font-weight: 700; }
-          .bottom-note { text-align: left; }
-          .bottom-note p { margin: 0; font-size: 12px; }
-          .bottom-note .auth { margin-top: 6px; font-weight: 700; }
+          .transparency { border: 1px solid #222; border-top: 0; min-height: 20mm; padding: 4px; font-size: 11px; font-weight: 700; }
+          .legend { border: 1px solid #222; border-top: 0; text-align: center; padding: 8px; font-size: 12px; font-style: italic; font-weight: 700; }
+          .bottom-strip { display: grid; grid-template-columns: 110px 1fr 230px; align-items: end; gap: 18px; margin-top: 10px; }
+          .qr-block img { width: 88px; height: 88px; display: block; border: 1px solid #222; }
+          .arca { font-size: 28px; font-weight: 800; letter-spacing: 1px; }
+          .bottom-note p { margin: 2px 0; font-size: 10px; }
+          .bottom-note .auth { margin-top: 5px; font-size: 12px; font-weight: 700; font-style: italic; }
+          .page-number { text-align: center; font-size: 12px; font-weight: 700; }
+          .cae { font-size: 12px; font-weight: 700; text-align: right; }
+          .cae p { margin: 5px 0; }
           @media print {
             @page { size: A4 portrait; margin: 0; }
             body { margin: 0; }
@@ -525,15 +563,10 @@ const renderAndPrintFactura = ({ venta, orden, items }) => {
 
           <header class="box header">
             <section class="header-col">
-              <div class="brand">
-                <img src="${logoCge}" alt="Logo ${escapeHtml(WORKSHOP_COMPANY_NAME)}" />
-                <div>
-                  <p class="brand-title">${escapeHtml(WORKSHOP_COMPANY_NAME)}</p>
-                  <p class="seller-line"><strong>Razón Social:</strong> ${escapeHtml(AFIP_ISSUER_NAME)}</p>
-                  <p class="seller-line"><strong>Domicilio Comercial:</strong> ${escapeHtml(AFIP_ISSUER_ADDRESS)}, ${escapeHtml(AFIP_ISSUER_CITY)}</p>
-                  <p class="seller-line"><strong>Condición frente al IVA:</strong> ${escapeHtml(AFIP_ISSUER_IVA_CONDITION)}</p>
-                </div>
-              </div>
+              <p class="brand-title">${escapeHtml(WORKSHOP_COMPANY_NAME)}</p>
+              <p class="seller-line"><strong>Razón Social:</strong> ${escapeHtml(AFIP_ISSUER_NAME)}</p>
+              <p class="seller-line"><strong>Domicilio Comercial:</strong> ${escapeHtml(AFIP_ISSUER_ADDRESS)} - ${escapeHtml(AFIP_ISSUER_CITY)}</p>
+              <p class="seller-line"><strong>Condición frente al IVA:</strong> ${escapeHtml(AFIP_ISSUER_IVA_CONDITION)}</p>
             </section>
 
             <section class="header-col center-box">
@@ -544,36 +577,33 @@ const renderAndPrintFactura = ({ venta, orden, items }) => {
             <section class="header-col">
               <h2 class="doc-title">FACTURA</h2>
               <p class="doc-line"><span class="doc-label">Punto de Venta:</span> ${escapeHtml(puntoVenta)} &nbsp;&nbsp; <span class="doc-label">Comp. Nro:</span> ${escapeHtml(nroComprobante)}</p>
-              <p class="doc-line"><span class="doc-label">Fecha de Emisión:</span> ${escapeHtml(dayjs(venta?.fecha || new Date()).format("DD/MM/YYYY"))}</p>
+              <p class="doc-line"><span class="doc-label">Fecha de Emisión:</span> ${escapeHtml(fechaEmision)}</p>
               <p class="doc-line"><span class="doc-label">CUIT:</span> ${escapeHtml(AFIP_ISSUER_CUIL)}</p>
-              <p class="doc-line"><span class="doc-label">Condición de venta:</span> ${escapeHtml(condicionVenta)}</p>
+              <p class="doc-line"><span class="doc-label">Ingresos Brutos:</span> ${escapeHtml(AFIP_ISSUER_GROSS_INCOME)}</p>
+              <p class="doc-line"><span class="doc-label">Fecha de Inicio de Actividades:</span> ${escapeHtml(AFIP_ISSUER_ACTIVITY_START)}</p>
             </section>
           </header>
+
+          ${discriminaIva ? `<section class="period"><div>Período Facturado Desde: ${escapeHtml(fechaEmision)}</div><div>Hasta: ${escapeHtml(fechaEmision)}</div><div>Fecha de Vto. para el pago: ${escapeHtml(fechaEmision)}</div></section>` : ""}
 
           <section class="row grid-two">
             <div>
               <p><strong>CUIT:</strong> ${escapeHtml(clienteCuit)}</p>
               <p><strong>Condición frente al IVA:</strong> ${escapeHtml(clienteCondicionIva)}</p>
-              <p><strong>Orden reparación:</strong> ${escapeHtml(formatOrderNumber(orden?.nro_orden))}</p>
+              <p><strong>Condición de venta:</strong> ${escapeHtml(condicionVenta)}</p>
             </div>
             <div>
               <p><strong>Apellido y Nombre / Razón Social:</strong> ${escapeHtml(clienteNombre)}</p>
-              <p><strong>Domicilio:</strong> ${escapeHtml(clienteDomicilio)}</p>
-              <p><strong>Equipo:</strong> ${escapeHtml(orden?.equipo || "-")}</p>
+              <p><strong>${discriminaIva ? "Domicilio Comercial" : "Domicilio"}:</strong> ${escapeHtml(clienteDomicilio)}</p>
             </div>
           </section>
 
           <table class="items">
             <thead>
               <tr>
-                <th style="width: 6%;">Código</th>
-                <th style="width: 34%;">Producto / Servicio</th>
-                <th style="width: 11%;">Cantidad</th>
-                <th style="width: 9%;">U. Medida</th>
-                <th style="width: 14%;">Precio Unit.</th>
-                <th style="width: 10%;">% Bonif.</th>
-                <th style="width: 10%;">Imp. Bonif.</th>
-                <th style="width: 16%;">Subtotal</th>
+                ${discriminaIva
+                  ? `<th style="width: 7%;">Código</th><th style="width: 31%;">Producto / Servicio</th><th style="width: 9%;">Cantidad</th><th style="width: 8%;">U. medida</th><th style="width: 12%;">Precio Unit.</th><th style="width: 8%;">% Bonif</th><th style="width: 12%;">Subtotal</th><th style="width: 7%;">Alicuota IVA</th><th style="width: 13%;">Subtotal c/IVA</th>`
+                  : `<th style="width: 7%;">Código</th><th style="width: 34%;">Producto / Servicio</th><th style="width: 11%;">Cantidad</th><th style="width: 9%;">U. Medida</th><th style="width: 14%;">Precio Unit.</th><th style="width: 8%;">% Bonif</th><th style="width: 10%;">Imp. Bonif.</th><th style="width: 16%;">Subtotal</th>`}
               </tr>
             </thead>
             <tbody>
@@ -585,46 +615,33 @@ const renderAndPrintFactura = ({ venta, orden, items }) => {
 
           <section class="footer-box">
             <div class="cae">
-              <p><strong>CAE N°:</strong> ${escapeHtml(cae)}</p>
-              <p><strong>Fecha de Vto. de CAE:</strong> ${escapeHtml(caeVto ? dayjs(caeVto).format("DD/MM/YYYY") : "-")}</p>
+              ${discriminaIva ? `<p>Importe Otros Tributos: $ ${formatAfipMoney(0)}</p>` : ""}
             </div>
             <table class="totals">
               <tbody>
-                <tr>
-                  <td>Subtotal:</td>
-                  <td>$ ${subtotal.toFixed(2)}</td>
-                </tr>
-                ${
-                  discriminaIva
-                    ? `<tr>
-                  <td>IVA (${ivaAlicuota.toFixed(1)}%):</td>
-                  <td>$ ${ivaImporte.toFixed(2)}</td>
-                </tr>`
-                    : ""
-                }
-                <tr>
-                  <td>Importe Otros Tributos:</td>
-                  <td>$ 0.00</td>
-                </tr>
-                <tr class="final">
-                  <td>Importe Total:</td>
-                  <td>$ ${total.toFixed(2)}</td>
-                </tr>
+                ${discriminaIva
+                  ? `<tr><td>Importe Neto Gravado: $</td><td>${formatAfipMoney(subtotal)}</td></tr><tr><td>IVA 27%: $</td><td>${formatAfipMoney(0)}</td></tr><tr><td>IVA 21%: $</td><td>${formatAfipMoney(ivaAlicuota === 21 ? ivaImporte : 0)}</td></tr><tr><td>IVA 10.5%: $</td><td>${formatAfipMoney(ivaAlicuota === 10.5 ? ivaImporte : 0)}</td></tr><tr><td>IVA 5%: $</td><td>${formatAfipMoney(0)}</td></tr><tr><td>IVA 2.5%: $</td><td>${formatAfipMoney(0)}</td></tr><tr><td>IVA 0%: $</td><td>${formatAfipMoney(0)}</td></tr><tr><td>Importe Otros Tributos: $</td><td>${formatAfipMoney(0)}</td></tr><tr class="final"><td>Importe Total: $</td><td>${formatAfipMoney(total)}</td></tr>`
+                  : `<tr><td>Subtotal: $</td><td>${formatAfipMoney(total)}</td></tr><tr><td>Importe Otros Tributos: $</td><td>${formatAfipMoney(0)}</td></tr><tr class="final"><td>Importe Total: $</td><td>${formatAfipMoney(total)}</td></tr>`}
               </tbody>
             </table>
           </section>
+
+          ${!discriminaIva ? `<section class="transparency"><p>Régimen de Transparencia Fiscal al Consumidor (Ley 27.743)</p><p style="margin-left: 170px;">IVA Contenido: $ ${formatAfipMoney(ivaContenido)}</p></section>` : ""}
+
+          <section class="legend">${escapeHtml(AFIP_INVOICE_LEGEND)}</section>
 
           ${
             isAfip
               ? `<section class="bottom-strip">
               <div class="qr-block">
                 <img src="${visualQr}" alt="QR visual de factura" />
-                <p class="qr-caption">QR AFIP</p>
               </div>
               <div class="bottom-note">
+                <div class="arca">ARCA</div>
                 <p class="auth">Comprobante Autorizado</p>
-                <p>Representacion visual del codigo QR de la factura.</p>
+                <p>Esta Agencia no se responsabiliza por los datos ingresados en el detalle de la operación</p>
               </div>
+              <div><p class="page-number">Pág. 1/1</p><div class="cae"><p>CAE N°: ${escapeHtml(cae)}</p><p>Fecha de Vto. de CAE: ${escapeHtml(caeVto ? dayjs(caeVto).format("DD/MM/YYYY") : "-")}</p></div></div>
             </section>`
               : ""
           }
