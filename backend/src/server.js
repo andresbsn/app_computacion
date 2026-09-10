@@ -916,9 +916,11 @@ const buildVentaReceiptPdfBuffer = ({ venta, comprobante, cliente, orden, itemsF
   const afipTipo = normalizeComprobanteAfipTipo(comprobante?.afip_tipo_comprobante);
   const comprobanteLabel = isAfipComprobante ? resolveAfipComprobanteLabel(afipTipo) : "COMPROBANTE DE PAGO";
   const saldoPendiente = Number(venta?.saldo_pendiente || 0);
-  const subtotal = Number(venta?.subtotal || 0);
   const ivaImporte = Number(venta?.afip_iva_importe || 0);
   const total = Number(venta?.total || 0);
+  const subtotal = isAfipComprobante && shouldDiscriminateAfipIva(afipTipo)
+    ? Math.max(total - ivaImporte, 0)
+    : Number(venta?.subtotal || 0);
 
   const wrapText = (value, maxChars = 74) => {
     const normalized = String(value || "-").replace(/\s+/g, " ").trim();
@@ -2463,15 +2465,9 @@ app.post("/ventas", async (req, res) => {
         let ivaImporte = 0;
 
         if (afipIvaConfig) {
-          if (body.origen === "orden") {
-            totalFinal = roundMoney(baseCalculada);
-            ivaImporte = roundMoney(totalFinal * (afipIvaConfig.rate / (100 + afipIvaConfig.rate)));
-            baseImponible = roundMoney(totalFinal - ivaImporte);
-          } else {
-            baseImponible = roundMoney(baseCalculada);
-            ivaImporte = roundMoney(baseImponible * (afipIvaConfig.rate / 100));
-            totalFinal = roundMoney(baseImponible + ivaImporte);
-          }
+          baseImponible = roundMoney(baseCalculada);
+          ivaImporte = roundMoney(baseImponible * (afipIvaConfig.rate / 100));
+          totalFinal = roundMoney(baseImponible + ivaImporte);
         }
 
         logVentaTrace(traceId, "POST /ventas | Totales calculados", {

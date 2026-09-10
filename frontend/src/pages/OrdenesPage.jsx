@@ -454,8 +454,8 @@ const renderAndPrintFactura = ({ venta, orden, items }) => {
   const subtotalBase = Number(venta?.subtotal ?? venta?.total ?? 0);
   const ivaAlicuota = isAfip ? Number(venta?.afip_iva_alicuota || 0) : 0;
   const ivaImporte = isAfip ? Number(venta?.afip_iva_importe || 0) : 0;
-  const total = Number(venta?.total ?? subtotalBase + ivaImporte);
-  const subtotal = discriminaIva ? Math.max(total - ivaImporte, 0) : total;
+  const total = Number(venta?.total ?? subtotalBase + (isAfip ? ivaImporte : 0));
+  const subtotal = discriminaIva ? subtotalBase : total;
   const clienteCuit = orden?.cliente_cuit || "-";
   const clienteCondicionIva = formatClienteCondicionIvaLabel(orden?.cliente_condicion_iva);
   const clienteNombre = orden?.cliente_nombre || "Consumidor final";
@@ -468,8 +468,8 @@ const renderAndPrintFactura = ({ venta, orden, items }) => {
     ? (items || [])
         .map((item) => {
           const cantidad = Number(item?.cantidad || 0);
-          const itemTotal = Number(item?.subtotal ?? cantidad * Number(item?.precio_unitario || 0));
-          const itemNeto = discriminaIva && ivaAlicuota > 0 ? itemTotal / (1 + ivaAlicuota / 100) : itemTotal;
+          const itemNeto = Number(item?.subtotal ?? cantidad * Number(item?.precio_unitario || 0));
+          const itemTotal = discriminaIva ? itemNeto * (1 + ivaAlicuota / 100) : itemNeto;
           const precioUnitario = cantidad > 0 ? itemNeto / cantidad : itemNeto;
 
           return discriminaIva
@@ -746,6 +746,7 @@ function OrdenesPage() {
   const [ventaExistenteOrdenData, setVentaExistenteOrdenData] = useState(null);
   const [isCheckingVentaExistente, setIsCheckingVentaExistente] = useState(false);
   const [isDispositivoManual, setIsDispositivoManual] = useState(false);
+  const [ordenParaEntregarLuego, setOrdenParaEntregarLuego] = useState(null);
   const [isClienteModalOpen, setIsClienteModalOpen] = useState(false);
   const [clienteForm, setClienteForm] = useState(initialClienteForm);
   const [editingOrderNumber, setEditingOrderNumber] = useState(null);
@@ -837,7 +838,15 @@ function OrdenesPage() {
     onError: (error) => {
       setFacturaError(error.message || "No se pudo generar la factura.");
     },
-    onSuccess: (venta, variables) => {
+    onSuccess: async (venta, variables) => {
+      if (variables?.entregarDespuesDeFacturar && variables?.ordenSnapshot?.id) {
+        await finalizarOrdenMutation.mutateAsync({
+          ordenId: variables.ordenSnapshot.id,
+          payload: { estado_actual: "entregada" }
+        });
+        setOrdenParaEntregarLuego(null);
+      }
+
       queryClient.invalidateQueries({ queryKey: ["ventas"] });
       setIsFacturaOpen(false);
       setFacturaForm(initialFacturaForm);
@@ -942,8 +951,6 @@ function OrdenesPage() {
     () => resolveAfipTipoComprobanteByClienteCondicion(facturaOrden?.cliente_condicion_iva),
     [facturaOrden?.cliente_condicion_iva]
   );
-  const discriminaIvaAfipFacturacion = facturaForm.tipo === "afip" && shouldDiscriminateAfipIva(afipTipoComprobanteSugeridoFacturacion);
-
   useEffect(() => {
     if (facturaForm.tipo === "afip" && facturaForm.afip_tipo_comprobante !== afipTipoComprobanteSugeridoFacturacion) {
       setFacturaForm((prev) => ({ ...prev, afip_tipo_comprobante: afipTipoComprobanteSugeridoFacturacion }));
@@ -951,7 +958,7 @@ function OrdenesPage() {
   }, [facturaForm.tipo, facturaForm.afip_tipo_comprobante, afipTipoComprobanteSugeridoFacturacion]);
 
   const afipFacturaPreview = useMemo(() => {
-    if (!discriminaIvaAfipFacturacion) {
+    if (facturaForm.tipo !== "afip") {
       return null;
     }
 
@@ -970,7 +977,7 @@ function OrdenesPage() {
       iva: roundMoney(iva),
       neto: roundMoney(neto)
     };
-  }, [discriminaIvaAfipFacturacion, facturaForm.afip_iva_alicuota, facturaTotalPreview]);
+  }, [facturaForm.tipo, facturaForm.afip_iva_alicuota, facturaTotalPreview]);
 
   const selectedCliente = useMemo(() => clientes.find((c) => String(c.id) === String(ordenForm.cliente_id)), [clientes, ordenForm.cliente_id]);
 
@@ -1115,17 +1122,17 @@ function OrdenesPage() {
     setIsFinalizandoOrdenId(orden.id);
 
     try {
-      if (orden.estado_actual !== "entregada") {
-        await finalizarOrdenMutation.mutateAsync({
-          ordenId: orden.id,
-          payload: { estado_actual: "entregada" }
-        });
-      }
-
       const ventasOrden = await api.ventas.list({ origen: "orden", orden_id: orden.id });
       const ventaExistente = Array.isArray(ventasOrden) && ventasOrden.length > 0 ? ventasOrden[0] : null;
 
       if (ventaExistente?.id) {
+        if (orden.estado_actual !== "entregada") {
+          await finalizarOrdenMutation.mutateAsync({
+            ordenId: orden.id,
+            payload: { estado_actual: "entregada" }
+          });
+        }
+
         const [detalleOrden, ventaDetalle] = await Promise.all([
           queryClient.fetchQuery({
             queryKey: ["orden-detalle", orden.id],
@@ -1146,6 +1153,7 @@ function OrdenesPage() {
         return;
       }
 
+      setOrdenParaEntregarLuego(orden.estado_actual !== "entregada" ? orden.id : null);
       await openFactura(orden.id);
     } catch (error) {
       setFacturaError(error.message || "No se pudo finalizar la orden.");
@@ -1679,6 +1687,7 @@ function OrdenesPage() {
           setIsFacturaOpen(false);
           setFacturaError("");
           setFacturaForm(initialFacturaForm);
+          setOrdenParaEntregarLuego(null);
         }}
         title={facturaOrden ? `Facturar orden ${formatOrderNumber(facturaOrden.nro_orden)}` : "Generar factura"}
         width={900}
@@ -1718,7 +1727,8 @@ function OrdenesPage() {
                   items: facturaItemsPreview
                 },
                 ordenSnapshot: facturaOrden,
-                itemsSnapshot: facturaItemsPreview
+                itemsSnapshot: facturaItemsPreview,
+                entregarDespuesDeFacturar: Number(ordenParaEntregarLuego) === Number(facturaOrden.id)
               });
             }}
           >
