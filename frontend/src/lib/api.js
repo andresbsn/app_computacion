@@ -127,7 +127,8 @@ export const api = {
       request(`/ordenes-reparacion/${id}/movimientos`, { method: "POST", body: JSON.stringify(payload) })
   },
   reportes: {
-    ordenesPorMarca: () => request("/reportes/ordenes-por-marca")
+    ordenesPorMarca: () => request("/reportes/ordenes-por-marca"),
+    deudaClientes: (search = "") => request(`/reportes/deuda-clientes${search ? `?search=${encodeURIComponent(search)}` : ""}`)
   },
   ventas: {
     list: (params = {}) => request(`/ventas${buildQuery(params)}`),

@@ -3437,6 +3437,49 @@ app.get("/reportes/ordenes-por-marca", async (_req, res) => {
   }
 });
 
+app.get("/reportes/deuda-clientes", async (req, res) => {
+  try {
+    const search = (req.query.search || "").toString().trim();
+    const params = [];
+    const filters = ["c.activo = true"];
+
+    if (search) {
+      params.push(`%${search}%`);
+      filters.push(`c.nombre ILIKE $${params.length}`);
+    }
+
+    const query = `
+      SELECT
+        c.id,
+        c.nombre,
+        c.telefono,
+        c.email,
+        c.documento,
+        COALESCE(SUM(CASE WHEN m.tipo = 'debe' THEN m.monto ELSE 0 END), 0) AS total_debe,
+        COALESCE(SUM(CASE WHEN m.tipo = 'haber' THEN m.monto ELSE 0 END), 0) AS total_haber,
+        COALESCE(SUM(CASE WHEN m.tipo = 'debe' THEN m.monto ELSE -m.monto END), 0) AS saldo
+      FROM ${schema}.clientes c
+      INNER JOIN ${schema}.cuenta_corriente_movimientos m ON m.cliente_id = c.id
+      WHERE ${filters.join(" AND ")}
+      GROUP BY c.id, c.nombre, c.telefono, c.email, c.documento
+      HAVING SUM(CASE WHEN m.tipo = 'debe' THEN m.monto ELSE -m.monto END) > 0
+      ORDER BY saldo DESC, c.nombre ASC
+    `;
+
+    const result = await pool.query(query, params);
+    res.json(
+      result.rows.map((row) => ({
+        ...row,
+        total_debe: Number(row.total_debe || 0),
+        total_haber: Number(row.total_haber || 0),
+        saldo: Number(row.saldo || 0)
+      }))
+    );
+  } catch (error) {
+    res.status(500).json({ error: "Error al generar reporte de deuda", message: error.message });
+  }
+});
+
 app.get("/usuarios", async (req, res) => {
   try {
     const search = (req.query.search || "").toString().trim();

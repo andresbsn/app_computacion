@@ -8,6 +8,7 @@ import ConfiguracionPage from "./pages/ConfiguracionPage";
 import ProgramarTareaPage from "./pages/ProgramarTareaPage";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
+import DeudaClientesPage from "./pages/DeudaClientesPage";
 import { useAuth } from "./lib/auth-context";
 
 const navItems = [
@@ -16,6 +17,7 @@ const navItems = [
   { to: "/productos", label: "Productos" },
   { to: "/ordenes", label: "Ordenes" },
   { to: "/ventas", label: "Ventas" },
+  { to: "/reportes/deuda-clientes", label: "Deuda clientes" },
   { to: "/programar-tarea", label: "Programar tarea" },
   { to: "/configuracion", label: "Configuracion" }
 ];
@@ -66,6 +68,7 @@ function ProtectedShell() {
           <Route path="/productos" element={<ProductosPage />} />
           <Route path="/ordenes" element={<OrdenesPage />} />
           <Route path="/ventas" element={<VentasPage />} />
+          <Route path="/reportes/deuda-clientes" element={<DeudaClientesPage />} />
           <Route path="/programar-tarea" element={<ProgramarTareaPage />} />
           <Route path="/configuracion" element={<ConfiguracionPage />} />
         </Routes>
