@@ -68,6 +68,30 @@ async function requestText(path, options = {}) {
   return data;
 }
 
+async function requestBlob(path, options = {}) {
+  const token = getAuthToken();
+  const response = await fetch(`${API_URL}${path}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers || {})
+    },
+    ...options
+  });
+
+  if (!response.ok) {
+    const data = await response.text();
+    try {
+      const parsed = JSON.parse(data);
+      throw new Error(parsed.error || "Error de API");
+    } catch (error) {
+      if (error instanceof Error && error.message !== "Error de API") throw error;
+      throw new Error("Error de API");
+    }
+  }
+
+  return response.blob();
+}
+
 export const api = {
   auth: {
     login: (payload) => request("/auth/login", { method: "POST", body: JSON.stringify(payload) }),
@@ -133,6 +157,7 @@ export const api = {
   ventas: {
     list: (params = {}) => request(`/ventas${buildQuery(params)}`),
     getById: (id) => request(`/ventas/${id}`),
+    getComprobantePdf: (id) => requestBlob(`/ventas/${id}/comprobante-pdf`),
     getTechnicalReportHtml: (id) => requestText(`/ventas/${id}/reporte-tecnico-html`),
     create: (payload) => request("/ventas", { method: "POST", body: JSON.stringify(payload) })
   }

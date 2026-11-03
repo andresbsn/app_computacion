@@ -4,6 +4,8 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
 import Afip from "@afipsdk/afip.js";
+import PDFDocument from "pdfkit";
+import QRCode from "qrcode";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -17,11 +19,17 @@ const app = express();
 const schema = config.db.schema;
 const CLIENTE_CONDICIONES_IVA = ["consumidor_final", "inscripto", "exento"];
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const workshopLogoBuffer = (() => {
+  try {
+    const logoPath = path.resolve(__dirname, "../../frontend/assets/logo_nuevo.jpg");
+    return fs.readFileSync(logoPath);
+  } catch {
+    return null;
+  }
+})();
 const workshopLogoDataUri = (() => {
   try {
-    const logoPath = path.resolve(__dirname, "../../frontend/assets/logo.jpeg");
-    const logoBuffer = fs.readFileSync(logoPath);
-    return `data:image/jpeg;base64,${logoBuffer.toString("base64")}`;
+    return workshopLogoBuffer ? `data:image/jpeg;base64,${workshopLogoBuffer.toString("base64")}` : "";
   } catch {
     return "";
   }
@@ -1104,6 +1112,133 @@ const buildVentaReceiptPdfBuffer = ({ venta, comprobante, cliente, orden, itemsF
   return Buffer.from(pdf, "binary");
 };
 
+const buildAfipQrUrl = ({ venta, comprobante, cliente }) => {
+  const afipTipo = normalizeComprobanteAfipTipo(comprobante?.afip_tipo_comprobante);
+  const tipoComprobante = AFIP_CBTE_TIPO_BY_LETTER[afipTipo] || 11;
+  const numero = String(comprobante?.numero || "").match(/(\d{4})-(\d{8})/);
+  const cuit = Number(normalizeDigits(config.afip.cuit) || 0);
+  const receptorCuit = normalizeDigits(cliente?.cuit);
+  const receptorDocumento = normalizeDigits(cliente?.documento);
+  const tipoDoc = receptorCuit.length === 11 ? 80 : receptorDocumento.length ? 96 : 99;
+  const nroDoc = tipoDoc === 80 ? Number(receptorCuit) : tipoDoc === 96 ? Number(receptorDocumento) : 0;
+  const payload = {
+    ver: 1,
+    fecha: new Date(comprobante?.fecha_emision || venta?.fecha || new Date()).toISOString().slice(0, 10),
+    cuit,
+    ptoVta: Number(numero?.[1] || comprobante?.punto_venta || config.afip.puntoVenta),
+    tipoCmp: tipoComprobante,
+    nroCmp: Number(numero?.[2] || 0),
+    importe: Number(venta?.total || 0),
+    moneda: "PES",
+    ctz: 1,
+    tipoDoc,
+    nroDoc,
+    tipoCodAut: "E",
+    codAut: Number(comprobante?.cae || 0)
+  };
+
+  return `https://www.afip.gob.ar/fe/qr/?p=${Buffer.from(JSON.stringify(payload)).toString("base64")}`;
+};
+
+const buildOfficialInvoicePdfBuffer = async ({ venta, comprobante, cliente, itemsFacturados = [] }) => {
+  if (String(comprobante?.tipo || "").toLowerCase() !== "afip") {
+    return buildVentaReceiptPdfBuffer({ venta, comprobante, cliente, itemsFacturados });
+  }
+
+  const afipTipo = normalizeComprobanteAfipTipo(comprobante.afip_tipo_comprobante) || "B";
+  const discriminaIva = shouldDiscriminateAfipIva(afipTipo);
+  const iva = Number(venta?.afip_iva_importe || 0);
+  const total = Number(venta?.total || 0);
+  const neto = discriminaIva ? Math.max(total - iva, 0) : total;
+  const qrData = await QRCode.toDataURL(buildAfipQrUrl({ venta, comprobante, cliente }), { margin: 1, width: 150 });
+  const qrBuffer = Buffer.from(qrData.split(",")[1], "base64");
+  const clienteDomicilio = [cliente?.direccion, cliente?.ciudad, cliente?.provincia].filter(Boolean).join(" - ") || "-";
+
+  return new Promise((resolve) => {
+    const doc = new PDFDocument({ size: "A4", margin: 28 });
+    const chunks = [];
+    doc.on("data", (chunk) => chunks.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    const left = 28;
+    const width = 539;
+    const right = left + width;
+    const line = (y) => doc.moveTo(left, y).lineTo(right, y).stroke();
+    const text = (value, x, y, options = {}) => doc.font(options.bold ? "Helvetica-Bold" : "Helvetica").fontSize(options.size || 9).text(String(value ?? "-"), x, y, { width: options.width, align: options.align || "left" });
+    const money = (value) => MONEY_FORMATTER.format(Number(value || 0));
+
+    doc.rect(left, 28, width, 24).stroke();
+    text("ORIGINAL", left, 35, { bold: true, size: 12, width, align: "center" });
+    doc.rect(left, 52, width, 106).stroke();
+    doc.moveTo(250, 52).lineTo(250, 158).stroke();
+    doc.moveTo(318, 52).lineTo(318, 158).stroke();
+    if (workshopLogoBuffer) {
+      doc.image(workshopLogoBuffer, 42, 60, { fit: [190, 48], align: "center", valign: "center" });
+    } else {
+      text(config.workshop.companyName, 38, 66, { bold: true, size: 12, width: 195, align: "center" });
+    }
+    text(`Razón Social: ${config.workshop.ownerName}`, 38, 112, { width: 205 });
+    text(`Domicilio Comercial: ${config.workshop.address}`, 38, 128, { width: 205 });
+    text(`Condición frente al IVA: ${config.afip.ivaCondition}`, 38, 144, { width: 205 });
+    text(afipTipo, 267, 78, { bold: true, size: 28, width: 35, align: "center" });
+    text(`COD. ${AFIP_CBTE_TIPO_BY_LETTER[afipTipo] || 11}`, 258, 116, { bold: true, size: 9, width: 55, align: "center" });
+    text("FACTURA", 330, 66, { bold: true, size: 17, width: 190 });
+    text(`Punto de Venta: ${String(comprobante.numero || "").split("-")[0] || config.afip.puntoVenta}`, 330, 94, { width: 230 });
+    text(`Comp. Nro: ${String(comprobante.numero || "").split("-")[1] || "-"}`, 330, 110, { width: 230 });
+    text(`Fecha de Emisión: ${formatDateOnly(comprobante.fecha_emision || venta.fecha)}`, 330, 126, { width: 230 });
+    text(`CUIT: ${normalizeDigits(config.afip.cuit)}`, 330, 142, { width: 230 });
+
+    let y = 174;
+    doc.rect(left, y, width, 64).stroke();
+    text(`CUIT: ${cliente?.cuit || "-"}`, 38, y + 10, { width: 250 });
+    text(`Apellido y Nombre / Razón Social: ${cliente?.nombre || "Consumidor Final"}`, 300, y + 10, { width: 250 });
+    text(`Condición frente al IVA: ${normalizeClienteCondicionIva(cliente?.condicion_iva) === "inscripto" ? "Responsable Inscripto" : normalizeClienteCondicionIva(cliente?.condicion_iva) === "exento" ? "IVA Sujeto Exento" : "Consumidor Final"}`, 38, y + 28, { width: 250 });
+    text(`Domicilio: ${clienteDomicilio}`, 300, y + 28, { width: 250 });
+    text(`Condición de venta: ${String(venta?.forma_pago || "Contado").toUpperCase()}`, 38, y + 46, { width: 250 });
+
+    y = 252;
+    const columns = [38, 285, 355, 430, 500];
+    doc.rect(left, y, width, 22).fillAndStroke("#d9d9d9", "#222");
+    [285, 355, 430, 500].forEach((x) => doc.moveTo(x, y).lineTo(x, y + 22).stroke());
+    text("Producto / Servicio", 42, y + 7, { bold: true, size: 8, width: 235 });
+    text("Cant.", 288, y + 7, { bold: true, size: 8, width: 65, align: "right" });
+    text("Precio Unit.", 358, y + 7, { bold: true, size: 8, width: 70, align: "right" });
+    text("Subtotal", 503, y + 7, { bold: true, size: 8, width: 60, align: "right" });
+    y += 22;
+    for (const item of itemsFacturados) {
+      doc.rect(left, y, width, 20).stroke();
+      text(item.descripcion || "-", 42, y + 6, { size: 8, width: 235 });
+      text(Number(item.cantidad || 0).toFixed(2), 288, y + 6, { size: 8, width: 65, align: "right" });
+      text(`$ ${money(item.precio_unitario)}`, 358, y + 6, { size: 8, width: 70, align: "right" });
+      text(`$ ${money(item.subtotal)}`, 503, y + 6, { size: 8, width: 60, align: "right" });
+      y += 20;
+    }
+    y = Math.max(y + 12, 590);
+    line(y);
+    y += 16;
+    text(`Importe Neto Gravado: $ ${money(neto)}`, 330, y, { bold: true, width: 225, align: "right" });
+    y += 16;
+    if (discriminaIva) {
+      text(`IVA ${Number(venta?.afip_iva_alicuota || 0).toFixed(1)}%: $ ${money(iva)}`, 330, y, { bold: true, width: 225, align: "right" });
+      y += 16;
+    }
+    text(`Importe Total: $ ${money(total)}`, 330, y, { bold: true, size: 11, width: 225, align: "right" });
+    if (!discriminaIva) {
+      y += 18;
+      text(`IVA contenido: $ ${money(total * (Number(venta?.afip_iva_alicuota || 0) / (100 + Number(venta?.afip_iva_alicuota || 0))))}`, 330, y, { bold: true, width: 225, align: "right" });
+    }
+    text(`Ingresos Brutos: ${config.afip.grossIncome || "-"}`, 38, 665, { width: 260 });
+    text(`Inicio de actividades: ${config.afip.activityStart || "-"}`, 38, 681, { width: 260 });
+    text(config.afip.invoiceLegend, 38, 697, { width: 300, size: 8 });
+    const bottom = 730;
+    doc.image(qrBuffer, left, bottom, { width: 88, height: 88 });
+    text("ARCA", 130, bottom + 5, { bold: true, size: 20, width: 100 });
+    text("Comprobante Autorizado", 130, bottom + 34, { bold: true, size: 10, width: 190 });
+    text(`CAE N°: ${comprobante.cae || "-"}`, 365, bottom + 16, { bold: true, width: 200, align: "right" });
+    text(`Fecha de Vto. de CAE: ${formatDateOnly(comprobante.cae_vto)}`, 365, bottom + 34, { bold: true, width: 200, align: "right" });
+    doc.end();
+  });
+};
+
 const mapEstadoToLabel = (estado) => {
   const labels = {
     ingresada: "Ingresada",
@@ -1406,7 +1541,8 @@ const getVentaEmailContext = async (ventaId) => {
         v.afip_iva_alicuota,
         v.afip_iva_importe,
         v.total,
-        cb.numero AS comprobante_numero,
+         cb.numero AS comprobante_numero,
+         cb.punto_venta AS comprobante_punto_venta,
         cb.tipo AS comprobante_tipo,
         cb.fecha_emision AS comprobante_fecha,
         cb.cae AS comprobante_cae,
@@ -1423,8 +1559,10 @@ const getVentaEmailContext = async (ventaId) => {
         c.email AS cliente_email,
         c.documento AS cliente_documento,
         c.cuit AS cliente_cuit,
-        c.condicion_iva AS cliente_condicion_iva,
-        c.direccion AS cliente_direccion
+         c.condicion_iva AS cliente_condicion_iva,
+         c.direccion AS cliente_direccion,
+         c.ciudad AS cliente_ciudad,
+         c.provincia AS cliente_provincia
       FROM ${schema}.ventas v
       LEFT JOIN ${schema}.ordenes_reparacion o ON o.id = v.orden_id
       LEFT JOIN ${schema}.clientes c ON c.id = COALESCE(v.cliente_id, o.cliente_id)
@@ -1477,8 +1615,9 @@ const getVentaEmailContext = async (ventaId) => {
       total: Number(row.total || 0)
     },
     comprobante: {
-      numero: row.comprobante_numero || `VTA-${row.id}`,
-      tipo: row.comprobante_tipo || "local",
+       numero: row.comprobante_numero || `VTA-${row.id}`,
+       tipo: row.comprobante_tipo || "local",
+       punto_venta: row.comprobante_punto_venta || null,
       fecha_emision: row.comprobante_fecha || row.fecha,
       cae: row.comprobante_cae || null,
       cae_vto: row.comprobante_cae_vto || null,
@@ -1498,8 +1637,10 @@ const getVentaEmailContext = async (ventaId) => {
       email: row.cliente_email,
       documento: row.cliente_documento,
       cuit: row.cliente_cuit,
-      condicion_iva: row.cliente_condicion_iva,
-      direccion: row.cliente_direccion
+       condicion_iva: row.cliente_condicion_iva,
+       direccion: row.cliente_direccion,
+       ciudad: row.cliente_ciudad,
+       provincia: row.cliente_provincia
     },
     detalle_facturado: detalleFacturado,
     items_facturados: itemsFacturados
@@ -1542,7 +1683,7 @@ const sendVentaEmail = async (report) => {
     <p><b>Total:</b> ${escapeHtml(formatCurrency(report.venta.total))}</p>
     ${saldoLine}
   `;
-  const pdfBuffer = buildVentaReceiptPdfBuffer({
+  const pdfBuffer = await buildOfficialInvoicePdfBuffer({
     venta: report.venta,
     comprobante: report.comprobante,
     cliente: report.cliente,
@@ -2309,6 +2450,33 @@ app.get("/ventas/:id/reporte-tecnico-html", async (req, res) => {
   }
 });
 
+app.get("/ventas/:id/comprobante-pdf", async (req, res) => {
+  const id = parseId(req.params.id, res);
+  if (!id) {
+    return;
+  }
+
+  try {
+    const report = await getVentaEmailContext(id);
+    if (!report) {
+      return res.status(404).json({ error: "Venta no encontrada" });
+    }
+
+    const pdfBuffer = await buildOfficialInvoicePdfBuffer({
+      venta: report.venta,
+      comprobante: report.comprobante,
+      cliente: report.cliente,
+      itemsFacturados: report.items_facturados
+    });
+    const filename = `comprobante-${String(report.comprobante.numero || id).replace(/[^a-zA-Z0-9-_]/g, "_")}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+    res.send(pdfBuffer);
+  } catch (error) {
+    res.status(500).json({ error: "Error al generar comprobante PDF", message: error.message });
+  }
+});
+
 app.post("/ventas", async (req, res) => {
   const traceId = createTraceId("venta");
   logVentaTrace(traceId, "POST /ventas | Inicio", {
@@ -2682,11 +2850,11 @@ app.post("/ventas", async (req, res) => {
 
         const comprobanteResult = await client.query(
           `
-            INSERT INTO ${schema}.comprobantes (venta_id, tipo, numero, cae, cae_vto, raw_respuesta_afip)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            RETURNING id, venta_id, tipo, numero, cae, cae_vto, fecha_emision
+            INSERT INTO ${schema}.comprobantes (venta_id, tipo, punto_venta, numero, cae, cae_vto, raw_respuesta_afip)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING id, venta_id, tipo, punto_venta, numero, cae, cae_vto, fecha_emision
           `,
-          [ventaCreada.id, body.tipo, numeroComprobante, cae, caeVto, rawRespuestaAfip]
+          [ventaCreada.id, body.tipo, body.tipo === "afip" ? String(config.afip.puntoVenta) : null, numeroComprobante, cae, caeVto, rawRespuestaAfip]
         );
 
         await client.query("COMMIT");

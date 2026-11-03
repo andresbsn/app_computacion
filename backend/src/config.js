@@ -22,6 +22,10 @@ export const config = {
     useSoapService: process.env.AFIP_USE_SOAP_SERVICE === "true",
     puntoVenta: toNumber(process.env.AFIP_PTO_VTA, 1),
     cbteTipo: toNumber(process.env.AFIP_CBTE_TIPO, 11),
+    grossIncome: process.env.AFIP_INGRESOS_BRUTOS || process.env.AFIP_CUIT || "",
+    activityStart: process.env.AFIP_INICIO_ACTIVIDADES || "",
+    ivaCondition: process.env.AFIP_CONDICION_IVA || "IVA Responsable Inscripto",
+    invoiceLegend: process.env.AFIP_LEYENDA_FACTURA || "Insumos - Servicio Tecnico",
     certPath: process.env.AFIP_CERT_PATH || "./credenciales/CGEELECTRONICA.crt",
     keyPath: process.env.AFIP_KEY_PATH || "./credenciales/privada.key"
   },

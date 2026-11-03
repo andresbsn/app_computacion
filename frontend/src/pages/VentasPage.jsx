@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import { api } from "../lib/api";
 import Modal from "../components/Modal";
-import logoCge from "../../assets/logo.jpeg?inline";
+import logoCge from "../../assets/logo_nuevo.jpg?inline";
 
 const AFIP_ISSUER_NAME = import.meta.env.VITE_AFIP_ISSUER_NAME || "ZABALA FEDERICO MIGUEL";
 const AFIP_ISSUER_ADDRESS = import.meta.env.VITE_AFIP_ISSUER_ADDRESS || "Rivadavia 357";
@@ -550,6 +550,21 @@ const renderAndPrintRawHtml = (html) => {
   printWhenReady(printWindow);
 };
 
+const renderAndPrintComprobantePdf = async (ventaId) => {
+  const blob = await api.ventas.getComprobantePdf(ventaId);
+  const url = URL.createObjectURL(blob);
+  const printWindow = window.open(url, "_blank", "width=900,height=780");
+  if (!printWindow) {
+    URL.revokeObjectURL(url);
+    throw new Error("El navegador bloqueo la ventana de impresion.");
+  }
+  printWindow.addEventListener("load", () => {
+    printWindow.focus();
+    printWindow.print();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, { once: true });
+};
+
 const createEmptyItem = () => ({
   tipo_item: "producto",
   producto_id: "",
@@ -702,15 +717,7 @@ function VentasPage() {
         queryFn: () => api.ventas.getById(ventaId)
       });
 
-      const esOrdenConFacturaLocal = ventaDetalleCompleto?.origen === "orden" && !isVentaAfip(ventaDetalleCompleto);
-
-      if (esOrdenConFacturaLocal) {
-        const technicalReportHtml = await api.ventas.getTechnicalReportHtml(ventaId);
-        renderAndPrintRawHtml(technicalReportHtml);
-        return;
-      }
-
-      renderAndPrintVentaComprobante(ventaDetalleCompleto);
+      await renderAndPrintComprobantePdf(ventaId);
     } catch (error) {
       setReprintError(error.message || "No se pudo reimprimir el comprobante.");
     } finally {

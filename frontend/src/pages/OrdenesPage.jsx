@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import { api } from "../lib/api";
 import Modal from "../components/Modal";
-import logoCge from "../../assets/logo.jpeg?inline";
+import logoCge from "../../assets/logo_nuevo.jpg?inline";
 
 const AFIP_ISSUER_NAME = import.meta.env.VITE_AFIP_ISSUER_NAME || "ZABALA FEDERICO MIGUEL";
 const AFIP_ISSUER_ADDRESS = import.meta.env.VITE_AFIP_ISSUER_ADDRESS || "Rivadavia 357";
@@ -431,7 +431,26 @@ const renderAndPrintOrden = (orden) => {
   printWhenReady(printWindow);
 };
 
+const renderAndPrintComprobantePdf = async (ventaId) => {
+  const blob = await api.ventas.getComprobantePdf(ventaId);
+  const url = URL.createObjectURL(blob);
+  const printWindow = window.open(url, "_blank", "width=900,height=780");
+  if (!printWindow) {
+    URL.revokeObjectURL(url);
+    throw new Error("El navegador bloqueo la ventana de impresion.");
+  }
+  printWindow.addEventListener("load", () => {
+    printWindow.focus();
+    printWindow.print();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, { once: true });
+};
+
 const renderAndPrintFactura = ({ venta, orden, items }) => {
+  if (venta?.id) {
+    renderAndPrintComprobantePdf(venta.id).catch(() => {});
+    return;
+  }
   const printWindow = window.open("", "_blank", "width=900,height=780");
   if (!printWindow) {
     return;
