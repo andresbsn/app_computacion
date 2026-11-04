@@ -21,8 +21,13 @@ const CLIENTE_CONDICIONES_IVA = ["consumidor_final", "inscripto", "exento"];
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workshopLogoBuffer = (() => {
   try {
-    const logoPath = path.resolve(__dirname, "../../frontend/assets/logo_nuevo.jpg");
-    return fs.readFileSync(logoPath);
+    const logoPaths = [
+      path.resolve(__dirname, "../../frontend/assets/logo_nuevo.jpg"),
+      path.resolve(__dirname, "../frontend/assets/logo_nuevo.jpg"),
+      path.resolve(__dirname, "../assets/logo_nuevo.jpg")
+    ];
+    const logoPath = logoPaths.find((candidate) => fs.existsSync(candidate));
+    return logoPath ? fs.readFileSync(logoPath) : null;
   } catch {
     return null;
   }
@@ -1212,7 +1217,22 @@ const buildOfficialInvoicePdfBuffer = async ({ venta, comprobante, cliente, item
       text(`$ ${money(item.subtotal)}`, 503, y + 6, { size: 8, width: 60, align: "right" });
       y += 20;
     }
-    y = Math.max(y + 12, 590);
+    const detailBottom = Math.max(y + 12, 590);
+    if (workshopLogoBuffer) {
+      const watermarkWidth = 390;
+      const watermarkHeight = 245;
+      const watermarkX = left + (width - watermarkWidth) / 2;
+      const watermarkY = y + Math.max(8, (detailBottom - y - watermarkHeight) / 2);
+      doc.save();
+      doc.opacity(0.09);
+      doc.image(workshopLogoBuffer, watermarkX, watermarkY, {
+        fit: [watermarkWidth, watermarkHeight],
+        align: "center",
+        valign: "center"
+      });
+      doc.restore();
+    }
+    y = detailBottom;
     line(y);
     y += 16;
     text(`Importe Neto Gravado: $ ${money(neto)}`, 330, y, { bold: true, width: 225, align: "right" });

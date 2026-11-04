@@ -8,6 +8,7 @@ RUN npm ci --omit=dev
 COPY src ./src
 COPY scripts ./scripts
 COPY credenciales ./credenciales
+COPY assets ./assets
 
 EXPOSE 3000
 
