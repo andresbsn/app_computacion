@@ -196,8 +196,12 @@ CREATE TABLE IF NOT EXISTS ${schema}.venta_items (
   descripcion VARCHAR(240) NOT NULL,
   cantidad NUMERIC(12, 2) NOT NULL CHECK (cantidad > 0),
   precio_unitario NUMERIC(12, 2) NOT NULL CHECK (precio_unitario >= 0),
+  costo_unitario NUMERIC(12, 2) CHECK (costo_unitario >= 0),
   subtotal NUMERIC(12, 2) NOT NULL CHECK (subtotal >= 0)
 );
+
+ALTER TABLE ${schema}.venta_items
+  ADD COLUMN IF NOT EXISTS costo_unitario NUMERIC(12, 2);
 
 CREATE TABLE IF NOT EXISTS ${schema}.comprobantes (
   id BIGSERIAL PRIMARY KEY,

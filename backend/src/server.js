@@ -2748,10 +2748,11 @@ app.post("/ventas", async (req, res) => {
 
         for (const item of body.items) {
           let descripcion = toNullable(item.descripcion);
+          let costoUnitario = 0;
 
           if (item.producto_id) {
             const productoResult = await client.query(
-              `SELECT id, nombre, stock_actual, activo FROM ${schema}.productos WHERE id = $1 FOR UPDATE`,
+              `SELECT id, nombre, costo, stock_actual, activo FROM ${schema}.productos WHERE id = $1 FOR UPDATE`,
               [item.producto_id]
             );
 
@@ -2761,6 +2762,7 @@ app.post("/ventas", async (req, res) => {
             }
 
             const producto = productoResult.rows[0];
+            costoUnitario = Number(producto.costo || 0);
             if (!descripcion) {
               descripcion = producto.nombre;
             }
@@ -2798,10 +2800,21 @@ app.post("/ventas", async (req, res) => {
           const itemSubtotal = item.cantidad * item.precio_unitario;
           await client.query(
             `
-              INSERT INTO ${schema}.venta_items (venta_id, tipo_item, producto_id, descripcion, cantidad, precio_unitario, subtotal)
-              VALUES ($1, $2, $3, $4, $5, $6, $7)
+              INSERT INTO ${schema}.venta_items (
+                venta_id, tipo_item, producto_id, descripcion, cantidad, precio_unitario, costo_unitario, subtotal
+              )
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             `,
-            [ventaCreada.id, item.tipo_item, item.producto_id ?? null, descripcion, item.cantidad, item.precio_unitario, itemSubtotal]
+            [
+              ventaCreada.id,
+              item.tipo_item,
+              item.producto_id ?? null,
+              descripcion,
+              item.cantidad,
+              item.precio_unitario,
+              costoUnitario,
+              itemSubtotal
+            ]
           );
         }
 
@@ -3665,6 +3678,108 @@ app.get("/reportes/deuda-clientes", async (req, res) => {
     );
   } catch (error) {
     res.status(500).json({ error: "Error al generar reporte de deuda", message: error.message });
+  }
+});
+
+app.get("/reportes/ganancias", async (req, res) => {
+  try {
+    const fechaInicio = (req.query.fecha_inicio || "").toString().trim();
+    const fechaFin = (req.query.fecha_fin || "").toString().trim();
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+    if (!datePattern.test(fechaInicio) || !datePattern.test(fechaFin)) {
+      return res.status(400).json({ error: "fecha_inicio y fecha_fin deben tener formato YYYY-MM-DD" });
+    }
+
+    const inicio = new Date(`${fechaInicio}T00:00:00Z`);
+    const fin = new Date(`${fechaFin}T00:00:00Z`);
+    const fechaInicioValida = !Number.isNaN(inicio.valueOf()) && inicio.toISOString().slice(0, 10) === fechaInicio;
+    const fechaFinValida = !Number.isNaN(fin.valueOf()) && fin.toISOString().slice(0, 10) === fechaFin;
+    if (!fechaInicioValida || !fechaFinValida || inicio > fin) {
+      return res.status(400).json({ error: "El período de fechas no es válido" });
+    }
+
+    const params = [fechaInicio, fechaFin];
+    const ventasQuery = `
+      SELECT
+        v.id,
+        v.fecha,
+        v.tipo,
+        v.origen,
+        v.total,
+        cb.numero AS comprobante_numero,
+        c.nombre AS cliente_nombre,
+        COALESCE(SUM(vi.cantidad * COALESCE(vi.costo_unitario, 0)), 0) AS costo_productos,
+        COALESCE(SUM(CASE WHEN vi.costo_unitario IS NULL THEN 1 ELSE 0 END), 0)::INT AS items_sin_costo
+      FROM ${schema}.ventas v
+      LEFT JOIN ${schema}.venta_items vi ON vi.venta_id = v.id
+      LEFT JOIN ${schema}.comprobantes cb ON cb.venta_id = v.id
+      LEFT JOIN ${schema}.clientes c ON c.id = v.cliente_id
+      WHERE v.estado = 'confirmada'
+        AND v.fecha >= $1::date
+        AND v.fecha < ($2::date + INTERVAL '1 day')
+      GROUP BY v.id, v.fecha, v.tipo, v.origen, v.total, cb.numero, c.nombre
+      ORDER BY v.fecha DESC, v.id DESC
+    `;
+
+    const gastosQuery = `
+      SELECT id, concepto, categoria, monto, fecha
+      FROM ${schema}.gastos
+      WHERE activo = true
+        AND fecha >= $1::date
+        AND fecha < ($2::date + INTERVAL '1 day')
+      ORDER BY fecha DESC, id DESC
+    `;
+
+    const [ventasResult, gastosResult] = await Promise.all([
+      pool.query(ventasQuery, params),
+      pool.query(gastosQuery, params)
+    ]);
+
+    const ventas = ventasResult.rows.map((venta) => {
+      const total = Number(venta.total || 0);
+      const costoProductos = Number(venta.costo_productos || 0);
+      return {
+        ...venta,
+        total,
+        costo_productos: costoProductos,
+        ganancia_bruta: total - costoProductos,
+        items_sin_costo: Number(venta.items_sin_costo || 0),
+        costo_estimado: Number(venta.items_sin_costo || 0) > 0
+      };
+    });
+    const gastos = gastosResult.rows.map((gasto) => ({
+      ...gasto,
+      monto: Number(gasto.monto || 0)
+    }));
+
+    const totalVentas = ventas.reduce((sum, venta) => sum + venta.total, 0);
+    const costoProductos = ventas.reduce((sum, venta) => sum + venta.costo_productos, 0);
+    const totalGastos = gastos.reduce((sum, gasto) => sum + gasto.monto, 0);
+    const gananciaBruta = totalVentas - costoProductos;
+    const gananciaNeta = gananciaBruta - totalGastos;
+    const itemsSinCosto = ventas.reduce((sum, venta) => sum + venta.items_sin_costo, 0);
+
+    res.json({
+      periodo: { fecha_inicio: fechaInicio, fecha_fin: fechaFin },
+      advertencias: {
+        costos_historicos_incompletos: itemsSinCosto > 0,
+        items_sin_costo: itemsSinCosto
+      },
+      resumen: {
+        total_ventas: totalVentas,
+        costo_productos: costoProductos,
+        ganancia_bruta: gananciaBruta,
+        total_gastos: totalGastos,
+        ganancia_neta: gananciaNeta,
+        cantidad_ventas: ventas.length,
+        margen_porcentaje: totalVentas > 0 ? (gananciaBruta / totalVentas) * 100 : 0
+      },
+      ventas,
+      gastos
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Error al generar reporte de ganancias", message: error.message });
   }
 });
 

@@ -152,7 +152,8 @@ export const api = {
   },
   reportes: {
     ordenesPorMarca: () => request("/reportes/ordenes-por-marca"),
-    deudaClientes: (search = "") => request(`/reportes/deuda-clientes${search ? `?search=${encodeURIComponent(search)}` : ""}`)
+    deudaClientes: (search = "") => request(`/reportes/deuda-clientes${search ? `?search=${encodeURIComponent(search)}` : ""}`),
+    ganancias: (params = {}) => request(`/reportes/ganancias${buildQuery(params)}`)
   },
   ventas: {
     list: (params = {}) => request(`/ventas${buildQuery(params)}`),
